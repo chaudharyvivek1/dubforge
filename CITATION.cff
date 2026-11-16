@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+title: "dubforge: multi-provider AI video dubbing with a quality-controlled pipeline"
+message: "If you use dubforge in research or teaching material, cite it like this."
+type: software
+authors:
+  - family-names: "Chaudhary"
+    given-names: "Vivek"
+    alias: "chaudharyvivek1"
+    website: "https://github.com/chaudharyvivek1"
+repository-code: "https://github.com/chaudharyvivek1/dubforge"
+url: "https://github.com/chaudharyvivek1/dubforge"
+license: MIT
+version: "0.1.0"
+date-released: "2026-11-16"
+abstract: >-
+  A dubbing pipeline that coordinates several AI providers: speech recognition with
+  diarisation, duration-aware translation with a rewrite loop, per-speaker voice
+  synthesis, stem separation to preserve music and effects, and a QC report with ten
+  checks. Exposed as a Python library, a CLI, an MCP server and an agent skill.
+keywords:
+  - dubbing
+  - audiovisual translation
+  - text-to-speech
+  - speech recognition
+  - voice cloning
+  - Indian languages
+  - localisation
+  - MCP
+  - ffmpeg

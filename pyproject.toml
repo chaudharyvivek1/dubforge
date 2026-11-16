@@ -11,15 +11,37 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Vivek Chaudhary" }]
 keywords = [
-  "dubbing", "translation", "voice-cloning", "tts", "asr", "mcp", "ai-agent",
-  "video", "ffmpeg", "elevenlabs", "deepgram", "whisper", "localisation",
+  "dubbing", "video-dubbing", "audiovisual-translation", "localisation", "localization",
+  "translation", "voice-cloning", "tts", "text-to-speech", "asr", "speech-recognition",
+  "diarisation", "forced-alignment", "stem-separation", "lip-sync",
+  "mcp", "model-context-protocol", "ai-agent", "agent-skill",
+  "video", "ffmpeg", "elevenlabs", "deepgram", "whisper", "sarvam", "indic-languages",
 ]
 classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "License :: OSI Approved :: MIT License",
   "Topic :: Multimedia :: Video",
+  "Topic :: Multimedia :: Video :: Non-Linear Editor",
   "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Topic :: Multimedia :: Sound/Audio :: Conversion",
+  "Topic :: Education",
+  "Natural Language :: Hindi",
+  "Natural Language :: Tamil",
+  "Natural Language :: Bengali",
+  "Natural Language :: Telugu",
+  "Natural Language :: Marathi",
+  "Natural Language :: English",
+  "Typing :: Typed",
 ]
+
 
 dependencies = [
   "requests>=2.31",
@@ -27,6 +49,15 @@ dependencies = [
   # on a machine with no system ffmpeg. A system ffmpeg still wins if present.
   "imageio-ffmpeg>=0.5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/chaudharyvivek1/dubforge"
+Repository = "https://github.com/chaudharyvivek1/dubforge"
+Documentation = "https://github.com/chaudharyvivek1/dubforge/tree/main/docs"
+Changelog = "https://github.com/chaudharyvivek1/dubforge/blob/main/CHANGELOG.md"
+Roadmap = "https://github.com/chaudharyvivek1/dubforge/blob/main/ROADMAP.md"
+Issues = "https://github.com/chaudharyvivek1/dubforge/issues"
+FAQ = "https://github.com/chaudharyvivek1/dubforge/blob/main/FAQ.md"
 
 [project.optional-dependencies]
 mcp = ["fastmcp>=2.0"]

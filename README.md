@@ -1,4 +1,13 @@
+<img src="docs/demo/banner.png" alt="dubforge: any video, any language, in a voice that keeps its place in the timeline" width="100%">
+
 # dubforge
+
+[![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
+[![tests](https://img.shields.io/badge/tests-56%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-10%20tools-6f42c1)](src/dubforge/server.py)
+[![demo offline](https://img.shields.io/badge/demo-no%20key%2C%20no%20network-orange)](#try-it-in-one-command)
 
 **Dub any video into any language — with several AI providers in one pipeline that
 is held to the clock.** One MCP server, one agent skill, swappable recognisers,
@@ -20,6 +29,25 @@ runs every stage for real, and writes an mp4 with a second audio track plus a QC
 report — so you can see the machine work before you spend a rupee on it.
 
 ---
+
+## Contents
+
+[What it does](#what-it-actually-does) ·
+[Install](#install) ·
+[Dub something](#dub-something) ·
+[From an agent](#use-it-from-an-agent) ·
+[Quality levers](#the-quality-levers-in-the-order-they-matter) ·
+[Providers](#providers) ·
+[Languages](#languages) ·
+[Cost](#cost) ·
+[School lab](#for-a-school-lab) ·
+[Limits](#what-this-does-not-do) ·
+[Repository layout](#repository-layout) ·
+[Docs](#docs) ·
+[FAQ](FAQ.md) ·
+[Roadmap](ROADMAP.md) ·
+[Credits](CREDITS.md) ·
+[Contributing](#contributing)
 
 ## What it actually does
 
@@ -216,24 +244,77 @@ and check the QC of every file before it goes near a student:
 
 ## Docs
 
-| | |
+Start with the FAQ if you have a "why does it sound like this" question; start with
+`quality.md` if you are tuning a real deliverable.
+
+| Document | What is in it |
 |---|---|
-| [architecture.md](docs/architecture.md) | stages, data model, files on disk, how to add a provider |
-| [providers.md](docs/providers.md) | every adapter: env, capabilities, quality, gotchas |
-| [quality.md](docs/quality.md) | the timing model, the QC checks, tuning a dub |
-| [languages.md](docs/languages.md) | per-language notes, Indic coverage, numbers, RTL |
-| [cost.md](docs/cost.md) | list prices with sources, worked examples, how to cut it |
-| [school.md](docs/school.md) | classroom deployment, consent, batch, offline mode |
-| [platforms.md](docs/platforms.md) | Linux, macOS, Windows, Docker, sandboxes |
-| [security.md](docs/security.md) | keys, consent, student footage, what leaves the machine |
+| [FAQ.md](FAQ.md) | 22 real questions: no keys, rushed lines, one voice, music gone, cloning, cost |
+| [docs/architecture.md](docs/architecture.md) | every stage, the data model, files on disk, how to add a provider, the design rules |
+| [docs/providers.md](docs/providers.md) | all 24 adapters: env vars, capabilities, honest quality notes, gotchas, and how to write one |
+| [docs/quality.md](docs/quality.md) | the timing arithmetic, the ten QC checks, and a symptom → fix table |
+| [docs/languages.md](docs/languages.md) | Indic coverage per stage, script/number/formality/gender traps, RTL |
+| [docs/cost.md](docs/cost.md) | list prices with sources, worked examples, how to cut the bill |
+| [docs/school.md](docs/school.md) | classroom deployment, consent, batch runs, offline mode, a first-week plan |
+| [docs/platforms.md](docs/platforms.md) | Linux, macOS, Windows, Docker, CPU-only sandboxes, hardware guidance |
+| [docs/security.md](docs/security.md) | keys, consent, student footage, what leaves the machine, hostile transcripts |
+| [skill/SKILL.md](skill/SKILL.md) | the agent skill: workflow, provider choice, failure modes, review loop |
+| [ROADMAP.md](ROADMAP.md) | what is next, and what is explicitly not planned |
+| [CREDITS.md](CREDITS.md) | every project and vendor this stands on, with licences |
+| [CHANGELOG.md](CHANGELOG.md) | what changed, and the known limitations of each release |
+
+## Repository layout
+
+```
+src/dubforge/
+  pipeline.py      the orchestrator: plan() and dub(), the eleven steps in order
+  ffmpeg.py        every decode, filter, mix, mux and measurement; ffmpeg resolution
+  fit.py           the timing model — chars/second per language, verdicts, budgets
+  timeline.py      words → sentences → speaker labels → per-line windows → voices
+  media.py         Word / Segment / Transcript, JSON round-trip, cache fingerprint
+  qc.py            the ten checks, the metrics, the one-screen summary
+  srt.py           source / target / bilingual SRT and WebVTT
+  config.py        Settings: flags, JSON file, environment; never prints a secret
+  doctor.py        what this machine can and cannot do, with the fix for each gap
+  demo.py          the offline clip, the offline run
+  cli.py           doctor · providers · voices · plan · dub · demo · srt · mcp
+  server.py        the MCP server (10 tools) and its instructions
+  pricing.py       indicative list prices, with sources, for `plan`
+  providers/       one module per stage + registry.py (what exists, what `auto` picks)
+tests/             56 tests; the ffmpeg ones skip themselves when ffmpeg is absent
+docs/              8 documents, one per question a user actually asks
+skill/             SKILL.md + 4 references, for agents
+examples/          classroom batch, one-shot shell, library use
+```
+
+## Credits
+
+dubforge is a pipeline, not an engine: FFmpeg does the audio, and the recognition,
+translation, voices and separation come from other people's work. [CREDITS.md](CREDITS.md)
+names every one of them with its licence — including the ones this project would not
+exist without, like [faster-whisper](https://github.com/SYSTRAN/faster-whisper),
+[Demucs](https://github.com/adefossez/demucs) and [edge-tts](https://github.com/rany2/edge-tts).
+
+If you cite this in teaching material, [CITATION.cff](CITATION.cff) is machine-readable.
 
 ## Contributing
 
-Bug reports with a failing QC report attached are the most useful thing you can
-send. A new provider is one file and one registry line — see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports with a failing QC report attached are the most useful thing you can send —
+`qc.json` and `report.md` contain no keys. A new provider is one file and one registry
+line. The most valuable contribution right now is verifying one network adapter against
+a live key and flipping its `verified` flag.
 
-## Licence
+* [CONTRIBUTING.md](CONTRIBUTING.md) — setup, the provider contract, what gets pushed back on
+* [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — short, and enforced
+* [SECURITY.md](SECURITY.md) — how to report a vulnerability privately
+* [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) — the forms ask for the QC report, on purpose
 
-MIT. Prices quoted in the docs are indicative list prices read in November 2026, not
-quotes, and the vendors' terms govern your use of their APIs.
+## Licence and terms
+
+Code: **MIT** — see [LICENSE](LICENSE). Copyright © 2026 Vivek Chaudhary.
+
+What that does *not* cover: the vendors' APIs, their models and their voices, each
+governed by their own terms — including their rules on voice cloning, consent and
+acceptable use. Prices quoted in the docs are indicative list prices read in November
+2026, not quotes. See [CREDITS.md](CREDITS.md) for the full list of dependencies and
+their licences.

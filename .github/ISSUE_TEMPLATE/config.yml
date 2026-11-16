@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Read the FAQ first
+    url: https://github.com/chaudharyvivek1/dubforge/blob/main/FAQ.md
+    about: Most "why does it sound like this" questions are answered there.
+  - name: Quality tuning guide
+    url: https://github.com/chaudharyvivek1/dubforge/blob/main/docs/quality.md
+    about: The arithmetic behind timing, and the table of symptom → fix.
+  - name: Security or consent issue
+    url: https://github.com/chaudharyvivek1/dubforge/security/policy
+    about: Please do not open a public issue for a vulnerability.

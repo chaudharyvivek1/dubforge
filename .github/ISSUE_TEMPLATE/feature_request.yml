@@ -1,0 +1,41 @@
+name: Feature or provider request
+description: A new provider, a new check, a quality improvement.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of change?
+      options:
+        - New provider (recognition / translation / voice / separation / lip sync)
+        - Quality of the dub (timing, voice, mix)
+        - Language or locale support
+        - CLI, MCP or agent-skill surface
+        - Docs
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the dub that went wrong, not the feature. "My Tamil dub runs 20% long" is more useful than "add length control".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like to happen
+      description: If you are proposing a provider, say whether you can test it with a live key — that decides whether it can ship as `verified`.
+
+  - type: checkboxes
+    id: honesty
+    attributes:
+      label: Before you file
+      options:
+        - label: This does not involve non-consensual voice impersonation.
+          required: true
+        - label: I have read docs/quality.md (for quality requests) or docs/providers.md (for provider requests).

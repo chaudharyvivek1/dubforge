@@ -1,0 +1,84 @@
+name: Bug report
+description: Something is wrong — a crash, a bad dub, a QC check that lies.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The single most useful thing you can attach is the **QC report** from the run.
+        It is at `dubforge-work/<name>/qc.json`, and `report.md` next to it tells the
+        story of the run. Both contain no keys — they are safe to paste.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+      placeholder: "Expected a Hindi dub with the music bed; got a dub with the music gone and lines landing late."
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command (or code)
+      description: Redact anything private. Do not paste keys.
+      render: shell
+      placeholder: |
+        dubforge dub lesson.mp4 --to hi --asr deepgram --translator openai --tts sarvam
+    validations:
+      required: true
+
+  - type: textarea
+    id: qc
+    attributes:
+      label: QC report
+      description: Paste `qc.json` or `dubforge dub ... --json | jq .qc`. This is what makes the report actionable.
+      render: json
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`dubforge doctor` output"
+      description: Paste it. It reports which keys are set, never their values.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: dubforge version
+      description: "`dubforge --version`"
+      placeholder: "dubforge 0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Docker
+        - Other / container
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stages
+    attributes:
+      label: Which stage is wrong?
+      multiple: true
+      options:
+        - recognition (words or timings wrong)
+        - translation (meaning or length wrong)
+        - voice (wrong voice, robotic, wrong language)
+        - timing (rushed, late, out of sync)
+        - mix (music gone, bed too loud, clipping)
+        - QC (a check that passes when it should fail, or the reverse)
+        - CLI / MCP / install
+        - something else
