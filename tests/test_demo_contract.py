@@ -138,3 +138,54 @@ def _payload(tmp_path: Path) -> dict:
             ],
         },
     }
+
+
+def test_a_crash_that_exits_one_is_not_the_expected_failure(tmp_path, monkeypatch):
+    """An uncaught exception also exits 1 — the same code as the intended QC failure."""
+    monkeypatch.setattr(
+        ci_demo_check,
+        "run_demo",
+        lambda out_dir, timeout=900: (1, "", "Traceback (most recent call last):\n  boom"),
+    )
+    with pytest.raises(ci_demo_check.DemoCheckFailed) as exc:
+        ci_demo_check.check(tmp_path)
+    assert exc.value.code == "demo_error"
+    assert "traceback" in exc.value.detail.lower()
+
+
+def test_empty_stdout_names_the_encoding_problem(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        ci_demo_check,
+        "run_demo",
+        lambda out_dir, timeout=900: (1, "", "UnicodeEncodeError: 'charmap' codec can't encode"),
+    )
+    with pytest.raises(ci_demo_check.DemoCheckFailed) as exc:
+        ci_demo_check.check(tmp_path)
+    assert exc.value.code == "invalid_json"
+    assert "stderr tail" in exc.value.detail
+    assert "UnicodeEncodeError" in exc.value.detail
+
+
+@needs_ffmpeg
+def test_json_output_survives_a_legacy_windows_code_page(tmp_path):
+    """The real Windows bug: a `→` in the payload killed the command with exit 1."""
+    import os
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "dubforge", "demo", "--out-dir", str(tmp_path / "demo"), "--json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"},
+        timeout=900,
+    )
+    assert proc.returncode == 1, proc.stderr[-500:]
+    assert "UnicodeEncodeError" not in proc.stderr
+    payload = json.loads(proc.stdout)  # must be valid JSON, not mojibake
+    assert payload["qc_ok"] is False
+    assert payload["qc"]["failures"] == ["translated"]
+    # and the machine output is pure ASCII, so no console can break it
+    assert proc.stdout.isascii()

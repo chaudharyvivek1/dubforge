@@ -7,6 +7,7 @@ with a new tool is try to run it by hand, and the second is put it in a cron job
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 
@@ -17,6 +18,33 @@ from .providers import registry
 from .providers.base import ProviderError, ProviderUnavailable
 
 EXIT_OK, EXIT_QC_FAILED, EXIT_ERROR = 0, 1, 2
+
+
+def _utf8_streams() -> None:
+    """Make the console able to print what we print.
+
+    A Windows console defaults to a legacy code page, and a transcript or a QC report
+    containing a single character outside it (`→`, Devanagari, Tamil) raises
+    `UnicodeEncodeError` and kills the command — with exit code 1, which is also the
+    code for "QC failed". Reconfiguring with `errors="replace"` cannot fail loudly.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        with contextlib.suppress(ValueError, OSError):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
+def _emit_json(payload) -> None:
+    """JSON on stdout that no console encoding can break.
+
+    `ensure_ascii=True` keeps machine output pure ASCII: `\u0915` is valid JSON and
+    every consumer decodes it, while a raw Devanagari character would crash a legacy
+    console mid-write. Human-readable output still prints in full UTF-8.
+    """
+    sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2) + "\n")
+    sys.stdout.flush()
 
 
 def _settings(args) -> Settings:
@@ -98,7 +126,10 @@ def _split_top_level(raw: str) -> list[str]:
 
 def cmd_doctor(args) -> int:
     settings = _settings(args)
-    print(doctor.to_json(settings) if args.json else doctor.text(settings))
+    if args.json:
+        _emit_json(doctor.checks(settings))
+    else:
+        print(doctor.text(settings))
     return EXIT_OK
 
 
@@ -108,7 +139,7 @@ def cmd_providers(args) -> int:
     if args.kind:
         rows = [r for r in rows if r["kind"] == args.kind]
     if args.json:
-        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        _emit_json(rows)
         return EXIT_OK
     current = None
     for row in rows:
@@ -136,7 +167,7 @@ def cmd_voices(args) -> int:
     provider = registry.resolve("tts", settings, args.tts)
     voices = provider.voices(args.lang or settings.target_lang)
     if args.json:
-        print(json.dumps([v.to_dict() for v in voices], ensure_ascii=False, indent=2))
+        _emit_json([v.to_dict() for v in voices])
         return EXIT_OK
     if not voices:
         print(
@@ -154,7 +185,7 @@ def cmd_plan(args) -> int:
     settings = _settings(args)
     plan = pipeline.plan(args.input, settings)
     if args.json:
-        print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
+        _emit_json(plan.to_dict())
     else:
         print(plan.text())
     return EXIT_OK if plan.ready else EXIT_ERROR
@@ -170,7 +201,7 @@ def cmd_dub(args) -> int:
         print(f"dubforge: {exc}", file=sys.stderr)
         return EXIT_ERROR
     if args.json:
-        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        _emit_json(result.to_dict())
     else:
         print()
         print(qc.summary(result.qc))
@@ -189,7 +220,7 @@ def cmd_dub(args) -> int:
 def cmd_demo(args) -> int:
     payload = demo.run(args.out_dir, target_lang=args.to, log=None if args.json else print)
     if args.json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        _emit_json(payload)
         return EXIT_OK if payload["qc_ok"] else EXIT_QC_FAILED
     print()
     print(qc.summary(payload["qc"]))
@@ -206,7 +237,7 @@ def cmd_srt(args) -> int:
     """Convert a dubforge transcript dump into subtitles (useful for review)."""
     transcript = Transcript.load(args.input)
     out = srt.write_all(transcript.segments, args.out_dir, args.stem or "dub")
-    print(json.dumps(out, indent=2))
+    _emit_json(out)
     return EXIT_OK
 
 
@@ -326,6 +357,7 @@ def _quality_args(p: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _utf8_streams()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

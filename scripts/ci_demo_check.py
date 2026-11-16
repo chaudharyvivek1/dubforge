@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,13 @@ MAX_OVERFLOW_S = 0.35
 DURATION_TOLERANCE_S = 0.6
 
 
+def _tail(text: str, lines: int = 6) -> str:
+    """The last few lines of stderr — the difference between a report and a riddle."""
+    if not text or not text.strip():
+        return "stderr: (empty)"
+    return "stderr tail: " + " | ".join(text.strip().splitlines()[-lines:])
+
+
 class DemoCheckFailed(Exception):
     def __init__(self, code: str, detail: str):
         super().__init__(f"[{code}] {detail}")
@@ -41,11 +49,21 @@ class DemoCheckFailed(Exception):
 
 
 def run_demo(out_dir: Path, timeout: int = 900) -> tuple[int, str, str]:
-    """Run the demo CLI. Returns (exit code, stdout, stderr)."""
+    """Run the demo CLI. Returns (exit code, stdout, stderr).
+
+    The child is forced into UTF-8 and the parent decodes as UTF-8, because a Windows
+    console defaults to a legacy code page: a single `→` in the payload used to raise
+    `UnicodeEncodeError`, exit 1, and produce an empty stdout — which this gate then
+    misread as "the expected QC failure".
+    """
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     proc = subprocess.run(
         [sys.executable, "-m", "dubforge", "demo", "--out-dir", str(out_dir), "--json"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
         timeout=timeout,
     )
     return proc.returncode, proc.stdout, proc.stderr
@@ -57,11 +75,15 @@ def check(out_dir: Path, timeout: int = 900) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     code, stdout, stderr = run_demo(out_dir, timeout)
 
+    tail = _tail(stderr)
+    if "Traceback (most recent call last)" in stderr:
+        # An uncaught exception also exits 1, which is exactly the expected QC code.
+        # Without this check a crashed demo would pass as "the intended failure".
+        raise DemoCheckFailed("demo_error", f"the demo crashed with a traceback. {tail}")
     if code not in (0, EXPECTED_EXIT):
         raise DemoCheckFailed(
             "demo_error",
-            f"demo exited {code} (expected {EXPECTED_EXIT} for the intended QC failure). "
-            f"stderr tail: {stderr.strip().splitlines()[-1] if stderr.strip() else '(empty)'}",
+            f"demo exited {code} (expected {EXPECTED_EXIT} for the intended QC failure). {tail}",
         )
     if code != EXPECTED_EXIT:
         raise DemoCheckFailed(
@@ -69,11 +91,16 @@ def check(out_dir: Path, timeout: int = 900) -> dict:
             f"demo exited {code}; the stub pipeline must fail QC and exit {EXPECTED_EXIT}. "
             "If stub translation now passes, the `translated` QC check has been weakened.",
         )
+    if not stdout.strip():
+        raise DemoCheckFailed("invalid_json", f"the demo produced no output on stdout. {tail}")
 
     try:
         payload = json.loads(stdout)
     except json.JSONDecodeError as exc:
-        raise DemoCheckFailed("invalid_json", f"--json produced unparseable output: {exc}") from exc
+        raise DemoCheckFailed(
+            "invalid_json",
+            f"--json produced unparseable output: {exc}. First bytes: {stdout[:120]!r}. {tail}",
+        ) from exc
 
     output = Path(payload.get("output") or "")
     if not output.exists():

@@ -62,15 +62,25 @@ command or MCP tool name changed.
   `atomic_write_text`), which is what Windows requires when a file is momentarily open.
   The first Windows run failed on exactly this; it is fixed and re-run, not skipped.
 
+* **`--json` output died on a legacy console (high).** A single `→` in a step detail
+  made `json.dumps`/`print` raise `UnicodeEncodeError` on a Windows code page: the
+  command exited **1** — the same code as "QC failed" — with empty stdout, so the CI
+  gate read a crash as the expected outcome. Machine output is now pure ASCII
+  (`ensure_ascii=True`), the console is reconfigured to UTF-8 with
+  `errors="replace"` for human output, the gate refuses an exit 1 that came with a
+  traceback or empty stdout, and every gate failure prints the stderr tail.
+
 ### Tests
 
-229 (was 143). New: two simultaneous transcriptions of one source, same-named files in
+232 (was 143). New: two simultaneous transcriptions of one source, same-named files in
 different folders, provider failure, save failure, "the lock is held during the write",
 sequential reuse, every boolean field against every documented word, six invalid boolean
 values, twelve invalid configuration files, cache lock blocking, stale-lock recovery,
 dead-pid recovery, an unwritable cache directory, and a cache failure that must not fail
 the dub, a thread holding the cache lock blocking siblings without hanging, and six
-threads serialising their writes.
+threads serialising their writes, a crash that exits 1 not being mistaken for the
+expected failure, and the demo run under `PYTHONIOENCODING=cp1252` still emitting valid
+ASCII JSON.
 
 ### Known limitations
 
