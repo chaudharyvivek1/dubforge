@@ -1,0 +1,40 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# dubforge artefacts — never commit a run
+dubforge-work/
+dubforge-demo/
+ci-demo/
+ci-demo.json
+dub-ledger.csv
+*.qc.json
+
+# media
+*.mp4
+*.mkv
+*.mov
+*.wav
+*.mp3
+*.m4a
+*.srt
+*.vtt
+!docs/demo/*.mp4
+
+# secrets
+.env
+.env.*
+!.env.example
+settings.json
+
+# os
+.DS_Store
+Thumbs.db

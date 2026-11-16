@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dubforge"
+version = "0.1.0"
+description = "One MCP server + agent skill that dubs any video into any language using several AI providers in one quality-controlled pipeline."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Vivek Chaudhary" }]
+keywords = [
+  "dubbing", "translation", "voice-cloning", "tts", "asr", "mcp", "ai-agent",
+  "video", "ffmpeg", "elevenlabs", "deepgram", "whisper", "localisation",
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+dependencies = [
+  "requests>=2.31",
+  # Ships a static ffmpeg binary, so `dubforge doctor` and `dubforge demo` work
+  # on a machine with no system ffmpeg. A system ffmpeg still wins if present.
+  "imageio-ffmpeg>=0.5",
+]
+
+[project.optional-dependencies]
+mcp = ["fastmcp>=2.0"]
+local = ["faster-whisper>=1.0"]      # offline ASR
+diarize = ["pyannote.audio>=3.1"]     # offline speaker diarisation
+sep = ["demucs>=4.0"]                 # offline music/voice separation
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+dubforge = "dubforge.cli:main"
+dubforge-mcp = "dubforge.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Deliberately narrow, same reasoning as a sibling project: catching Exception
+# around a network provider is the point (an agent must never get a traceback
+# instead of a diagnosis), and subprocess return codes are inspected by hand.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]

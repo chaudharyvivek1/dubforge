@@ -1,0 +1,96 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12"]
+        include:
+          - os: macos-latest
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install ffmpeg
+          else
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          fi
+        shell: bash
+
+      - name: Install dubforge
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+
+      - name: Doctor (must not fail on a supported machine)
+        run: python -m dubforge doctor
+
+      - name: Tests
+        run: python -m pytest -q --durations=10
+
+      - name: Demo smoke test (offline, real ffmpeg)
+        run: python -m dubforge demo --out-dir ci-demo --json > ci-demo.json || true
+        shell: bash
+
+      - name: Check the demo produced a playable file
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          from dubforge import ffmpeg
+          data = json.loads(pathlib.Path("ci-demo.json").read_text())
+          info = ffmpeg.probe(data["output"])
+          assert info.has_video and info.has_audio, info
+          assert data["qc"]["metrics"]["rendered"] == 3
+          print("demo ok:", info.summary)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-${{ matrix.os }}-${{ matrix.python }}
+          path: |
+            ci-demo.json
+            ci-demo/*.mp4
+            ci-demo/work/*/qc.json
+            ci-demo/work/*/report.md
+          retention-days: 7
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine && python -m build
+      - run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*

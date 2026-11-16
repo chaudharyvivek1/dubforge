@@ -1,0 +1,78 @@
+# Languages
+
+Indian languages are the reason this project exists, so they get the defaults. This
+page is what is covered where, and the things that go wrong that are not about model
+quality at all.
+
+## Coverage by stage
+
+| Language | ASR | Translation | Voice | Speech-rate constant |
+|---|---|---|---|---|
+| Hindi `hi` | all providers | all, `sarvam` best | `sarvam` Bulbul, ElevenLabs, edge `hi-IN-*` | 13.5 cps |
+| Bengali `bn` | all | `sarvam`, LLMs | `sarvam`, edge `bn-IN-*` | 12.5 |
+| Tamil `ta` | all | `sarvam`, LLMs | `sarvam`, edge `ta-IN-*` | 11.5 |
+| Telugu `te` | all | `sarvam`, LLMs | `sarvam`, edge `te-IN-*` | 11.5 |
+| Marathi `mr` | all | `sarvam`, LLMs | `sarvam`, edge `mr-IN-*` | 13.5 |
+| Gujarati `gu` | all | `sarvam` | `sarvam`, edge `gu-IN-*` | 13.0 |
+| Kannada `kn` | all | `sarvam` | `sarvam`, edge `kn-IN-*` | 11.5 |
+| Malayalam `ml` | all | `sarvam` | `sarvam`, edge `ml-IN-*` | 11.5 |
+| Punjabi `pa` | all | `sarvam` | `sarvam`, edge `pa-IN-*` | 13.0 |
+| Odia `or` | most | `sarvam` | `sarvam` | 12.5 |
+| Assamese `as` | most | `sarvam` | `sarvam` | 12.5 |
+| Urdu `ur` | most | LLMs | edge `ur-PK-*` | 12.5 |
+| English `en` | all | all | all | 15.0 |
+
+"All" means the provider documents the language; per-language quality varies and
+should be measured on your own footage, not taken from a table — including this one.
+
+## Things that break Indic dubs
+
+**Script, not transliteration.** A Tamil or Devanagari string in Latin letters is
+mispronounced by every engine. Ask the translator for the target *script* (the shared
+prompt already says so), and check one line before a full run:
+`dubforge dub clip.mp4 --to hi --json | jq '.subtitles'`.
+
+**Numbers.** "2026" is *do hazaar chhabbis* in Hindi and *irāyira irupatti āru* in
+Tamil, and vendors differ on whether they expand it. The prompt asks for the spoken
+form; if a voice still reads digits in English, pin it in the glossary:
+`--glossary "2026=दो हज़ार छब्बीस"`.
+
+**Names and acronyms.** This is what `--glossary` is for. `ISRO`, `UPI`, `NEP`,
+student names, place names. Without it, a model may translate an acronym into a
+phrase that means nothing.
+
+**Code-mixing.** Real Indian speech mixes languages inside a sentence ("yeh file
+upload kar dijiye"). ASR handles it; translation often flattens it. If the register
+matters, say so in `--context`: *"Hinglish classroom talk; keep the code-mixing"*.
+
+**Formality.** Hindi तू / तुम / आप, Bengali তুই / তুমি / আপনি, Tamil நீ / நீங்கள். A
+teacher addressing a class is not the same as a friend. Put it in `--style`:
+`--style "respectful teacher addressing a class, आप-form"`.
+
+**Gender agreement.** Many Indic languages inflect the verb for the speaker's gender,
+and the source may not say. If the voice's gender is known (it is — you chose the
+voice), state it in `--context` so the translation agrees with the voice rather than
+with the source's default.
+
+## Right-to-left
+
+Urdu (`ur`) and Arabic (`fa`, `ar`) are RTL. Audio does not care, but the subtitle
+files do: SRT/VTT written by dubforge are plain UTF-8 with no direction marks, which
+most players render correctly. If yours does not, prefix each line with U+202B
+(RIGHT-TO-LEFT EMBEDDING) — a one-line change in `srt.to_srt` if you need it
+permanently.
+
+## Language codes
+
+Use the short ISO 639-1 code (`hi`, `ta`, `es`). Region variants are accepted where a
+provider needs them (`hi-IN` for Google and Sarvam TTS, `pt-BR` for Brazilian) and
+`tts.locale_for` maps the short code for you. `--from auto` lets the recogniser
+decide; `--to` is always explicit, because a dub with no target language is not a
+dub.
+
+## Same-language runs
+
+`--to en` on English source skips translation entirely (`translator = same-language`)
+and re-voices the existing text. That is genuinely useful: it re-performs a flat
+narration, or replaces a bad microphone, without changing a word. QC's `translated`
+check passes because the text was not stubbed — it was intentionally identical.

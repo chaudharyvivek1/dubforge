@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+dubforge-work
+dubforge-demo
+tests
+docs
+examples
+*.mp4
+*.wav
+*.mp3
+.env
