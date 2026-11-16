@@ -299,7 +299,8 @@ def _cache_lock_is_stale(lock: Path) -> bool:
     try:
         info = json.loads(lock.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return False  # just created, body not written yet
+        # Created but not yet written. Live if it is young, debris if it is old.
+        return age > 5.0
     pid = info.get("pid") if isinstance(info, dict) else None
     if os.name == "nt" or not isinstance(pid, int) or pid == os.getpid():
         return False

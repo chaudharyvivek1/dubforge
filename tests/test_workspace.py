@@ -222,3 +222,64 @@ def test_manifest_survives_a_corrupt_file(tmp_path):
     assert job.read_manifest() == {}
     job.write_manifest(fingerprint="f")
     assert job.read_manifest()["fingerprint"] == "f"
+
+
+def test_many_threads_racing_for_one_job_all_get_their_own_directory(tmp_path):
+    """The lock is created empty and written a moment later — that gap is not staleness."""
+    import threading
+
+    source = _touch(tmp_path / "lesson.mp4")
+    work = tmp_path / "work"
+    jobs: list[JobWorkspace] = []
+    errors: list[Exception] = []
+
+    def claim() -> None:
+        try:
+            jobs.append(open_job(work, source, fingerprint="f"))
+        except Exception as exc:  # noqa: BLE001 - asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=claim) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    try:
+        assert not errors, errors
+        assert len({job.path for job in jobs}) == 6, [job.path.name for job in jobs]
+    finally:
+        for job in jobs:
+            job.release()
+
+
+def test_an_empty_lock_file_is_not_stolen_while_it_is_being_created(tmp_path):
+    source = _touch(tmp_path / "lesson.mp4")
+    work = tmp_path / "work"
+    first = open_job(work, source, fingerprint="f")
+    try:
+        # Simulate the instant between os.open() and the payload write.
+        (first.path / ".lock").write_text("", encoding="utf-8")
+        second = open_job(work, source, fingerprint="f")
+        try:
+            assert second.path != first.path, "a lock being created was mistaken for a stale one"
+        finally:
+            second.release()
+    finally:
+        first.release()
+
+
+def test_an_old_empty_lock_file_is_reclaimed(tmp_path):
+    source = _touch(tmp_path / "lesson.mp4")
+    work = tmp_path / "work"
+    first = open_job(work, source, fingerprint="f")
+    base = first.path
+    first.release()
+    (base / ".lock").write_text("", encoding="utf-8")
+    old = time.time() - 60
+    os.utime(base / ".lock", (old, old))
+    again = open_job(work, source, fingerprint="f")
+    try:
+        assert again.path == base
+    finally:
+        again.release()

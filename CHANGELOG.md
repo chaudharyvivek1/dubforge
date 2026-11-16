@@ -70,9 +70,15 @@ command or MCP tool name changed.
   `errors="replace"` for human output, the gate refuses an exit 1 that came with a
   traceback or empty stdout, and every gate failure prints the stderr tail.
 
+* **A lock being created could be stolen (high).** The lock file is created empty and
+  written a microsecond later; a second job that read it in that window saw "no pid" and
+  called it stale, reclaimed the directory and joined the first job's workspace. An
+  unreadable lock is now treated as live unless it is older than a five-second creation
+  grace, in both the workspace lock and the cache lock. Found by a Linux 3.10 CI run.
+
 ### Tests
 
-232 (was 143). New: two simultaneous transcriptions of one source, same-named files in
+235 (was 143). New: two simultaneous transcriptions of one source, same-named files in
 different folders, provider failure, save failure, "the lock is held during the write",
 sequential reuse, every boolean field against every documented word, six invalid boolean
 values, twelve invalid configuration files, cache lock blocking, stale-lock recovery,
@@ -80,7 +86,8 @@ dead-pid recovery, an unwritable cache directory, and a cache failure that must 
 the dub, a thread holding the cache lock blocking siblings without hanging, and six
 threads serialising their writes, a crash that exits 1 not being mistaken for the
 expected failure, and the demo run under `PYTHONIOENCODING=cp1252` still emitting valid
-ASCII JSON.
+ASCII JSON, six threads racing for one job directory, an empty lock file not being
+stolen while it is being created, and an old empty lock being reclaimed.
 
 ### Known limitations
 

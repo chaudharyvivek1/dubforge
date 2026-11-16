@@ -40,6 +40,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 STALE_AFTER_S = 24 * 3600
+# A lock file is created empty and written a microsecond later. Anything younger than
+# this is "being created", not "abandoned" — treating it as stale lets a second job
+# steal a live lock, which is exactly the collision the lock exists to prevent.
+CREATING_GRACE_S = 5.0
 UNLINK_ATTEMPTS = 6
 UNLINK_DELAY_S = 0.03  # a lock older than this is from a dead run, not a live one
 MAX_JOB_SUFFIXES = 32
@@ -249,20 +253,24 @@ def _try_lock(directory: Path) -> tuple[bool, Path]:
 
 def _lock_is_stale(lock: Path) -> bool:
     try:
+        age = time.time() - lock.stat().st_mtime
+    except OSError:
+        return True
+    try:
         raw = lock.read_text(encoding="utf-8")
         info = json.loads(raw) if raw.strip() else {}
     except (OSError, json.JSONDecodeError):
         info = {}
-    try:
-        age = time.time() - lock.stat().st_mtime
-    except OSError:
-        return True
     if age > STALE_AFTER_S:
         return True
+    if not info:
+        # Empty or half-written: either a lock being created right now, or the debris
+        # of a process that died between `os.open` and the write. Only the second is
+        # safe to reclaim, and age is the only way to tell them apart.
+        return age > CREATING_GRACE_S
     pid = info.get("pid")
-    if isinstance(pid, int) and pid != os.getpid() and not _pid_alive(pid):
-        return True
-    return not info  # unreadable or empty: nobody is holding this
+    # The holder is gone: a dead pid on POSIX, never on Windows (age alone decides there).
+    return isinstance(pid, int) and pid != os.getpid() and not _pid_alive(pid)
 
 
 def open_job(
