@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlencode
 
 from ..media import Segment, Transcript, Word
 from .base import ASRProvider, ProviderError, Spec
@@ -201,7 +202,7 @@ class DeepgramASR(ASRProvider):
         }
         if language and language != "auto":
             params["language"] = language
-        query = "&".join(f"{k}={v}" for k, v in params.items())
+        query = urlencode(params)
         with open(audio, "rb") as handle:
             resp = post(
                 f"https://api.deepgram.com/v1/listen?{query}",

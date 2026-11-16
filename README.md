@@ -74,7 +74,7 @@ video ──► probe ──► separate stems ──► transcribe ──► tr
 | **Fit the clock** | every line is budgeted in characters before it is spoken; over-long lines go *back* to the translator |
 | **Stretch** | only what is still slightly long, and never past `--max-speed` (1.15x by default) |
 | **Mix** | loudness-normalised dub + original bed with sidechain ducking, then a stream copy of the picture |
-| **QC** | ten checks; a `fail` exits non-zero and says which line broke |
+| **QC** | fifteen checks; a `fail` exits non-zero and says which line broke |
 
 ## Install
 
@@ -123,16 +123,25 @@ directory:
 
 ```
 lecture.hi.mp4            the dub (picture stream-copied, audio re-encoded)
-dubforge-work/lecture/
-  dub_norm.wav            the dub alone, loudness-normalised
-  transcript.dub.json     source + translation + timings + per-line speed
-  lecture.source.srt      what was said
-  lecture.dub.srt         what the dub says
-  lecture.bilingual.srt   both, for proofreading
-  lecture.vtt             web subtitles
-  qc.json                 the machine-checkable verdict
-  report.md               plan, steps, QC and file list in one page
+dubforge-work/
+  jobs/lecture-a1b2c3d4/          one directory per source path, locked while in use
+    manifest.json                 what this job is, and how far it got
+    dub_norm.wav                  the dub alone, loudness-normalised
+    transcript.dub.json           source + translation + timings + per-line speed
+    lecture.source.srt            what was said
+    lecture.hi.srt                what the dub says
+    lecture.bilingual.srt         both, for proofreading
+    lecture.vtt                   web subtitles
+    qc.json                       the machine-checkable verdict
+    report.md                     plan, steps, QC and file list in one page
+  cache/<content-key>/transcript.json
+                                  shared across jobs: the same file dubbed into two
+                                  languages pays for recognition once
 ```
+
+Two jobs on the same file get separate directories (`…-2`, `…-3`), and two files with
+the same name in different folders never share one. An interrupted run resumes in its
+own directory: `manifest.json` records which steps finished.
 
 `--dry-run` stops after the plan. `--json` on any command gives machine output.
 
@@ -252,7 +261,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [FAQ.md](FAQ.md) | 22 real questions: no keys, rushed lines, one voice, music gone, cloning, cost |
 | [docs/architecture.md](docs/architecture.md) | every stage, the data model, files on disk, how to add a provider, the design rules |
 | [docs/providers.md](docs/providers.md) | all 24 adapters: env vars, capabilities, honest quality notes, gotchas, and how to write one |
-| [docs/quality.md](docs/quality.md) | the timing arithmetic, the ten QC checks, and a symptom → fix table |
+| [docs/quality.md](docs/quality.md) | the timing arithmetic, the fifteen QC checks, and a symptom → fix table |
 | [docs/languages.md](docs/languages.md) | Indic coverage per stage, script/number/formality/gender traps, RTL |
 | [docs/cost.md](docs/cost.md) | list prices with sources, worked examples, how to cut the bill |
 | [docs/school.md](docs/school.md) | classroom deployment, consent, batch runs, offline mode, a first-week plan |
@@ -272,13 +281,14 @@ src/dubforge/
   fit.py           the timing model — chars/second per language, verdicts, budgets
   timeline.py      words → sentences → speaker labels → per-line windows → voices
   media.py         Word / Segment / Transcript, JSON round-trip, cache fingerprint
-  qc.py            the ten checks, the metrics, the one-screen summary
+  qc.py            the fifteen checks, the metrics, the one-screen summary
   srt.py           source / target / bilingual SRT and WebVTT
   config.py        Settings: flags, JSON file, environment; never prints a secret
   doctor.py        what this machine can and cannot do, with the fix for each gap
   demo.py          the offline clip, the offline run
   cli.py           doctor · providers · voices · plan · dub · demo · srt · mcp
-  server.py        the MCP server (10 tools) and its instructions
+  server.py        the MCP server (10 tools), validation and structured errors
+  workspace.py     job directories, locks, the shared transcript cache, safe cleanup
   pricing.py       indicative list prices, with sources, for `plan`
   providers/       one module per stage + registry.py (what exists, what `auto` picks)
 tests/             56 tests; the ffmpeg ones skip themselves when ffmpeg is absent

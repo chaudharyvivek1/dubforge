@@ -86,12 +86,19 @@ def read_srt(path: str | Path) -> list[Segment]:
     return segments
 
 
-def write_all(segments: list[Segment], out_dir: str | Path, stem: str) -> dict[str, str]:
+def write_all(
+    segments: list[Segment],
+    out_dir: str | Path,
+    stem: str,
+    lang: str = "dub",
+) -> dict[str, str]:
+    """Write the four review files. `lang` names the target file, e.g. `lesson.hi.srt`."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    tag = (lang or "dub").strip() or "dub"
     paths = {
         "source_srt": out_dir / f"{stem}.source.srt",
-        "target_srt": out_dir / f"{stem}.{stem_lang(segments)}.srt",
+        "target_srt": out_dir / f"{stem}.{tag}.srt",
         "bilingual_srt": out_dir / f"{stem}.bilingual.srt",
         "vtt": out_dir / f"{stem}.vtt",
     }
@@ -99,12 +106,4 @@ def write_all(segments: list[Segment], out_dir: str | Path, stem: str) -> dict[s
     paths["target_srt"].write_text(to_srt(segments, target=True), encoding="utf-8")
     paths["bilingual_srt"].write_text(to_bilingual_srt(segments), encoding="utf-8")
     paths["vtt"].write_text(to_vtt(segments), encoding="utf-8")
-    return {k: str(v) for k, v in paths.items()}
-
-
-def stem_lang(segments: list[Segment]) -> str:
-    """Best-effort language tag for the file name, from the translator that ran."""
-    for seg in segments:
-        if seg.translator:
-            return "dub"
-    return "dub"
+    return {key: str(value) for key, value in paths.items()}

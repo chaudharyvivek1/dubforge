@@ -62,6 +62,37 @@ def _as_wav(src: str, dst: str, sample_rate: int = 48000) -> str:
     return dst
 
 
+def run_coroutine(coro):
+    """Run a coroutine from sync code, even when a loop is already running.
+
+    `asyncio.run()` raises inside a running loop, and the MCP server calls providers
+    from an async context — which turned every `edge_tts` line into a RuntimeError
+    there. Off the main loop it runs directly; on it, a short-lived thread owns the loop.
+    """
+    import asyncio
+    import threading
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict = {}
+
+    def worker() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the caller's thread
+            result["error"] = exc
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
+
+
 def _duration(path: str) -> float | None:
     try:
         return round(ffmpeg.duration_of(path), 3)
@@ -352,11 +383,9 @@ class EdgeTTS(TTSProvider):
 
     def voices(self, language: str = "") -> list[Voice]:
         try:
-            import asyncio
-
             import edge_tts
 
-            rows = asyncio.run(edge_tts.list_voices())
+            rows = run_coroutine(edge_tts.list_voices())
         except Exception:  # noqa: BLE001 - offline is a normal state here
             return []
         prefix = (language or "").split("-")[0].lower()
@@ -374,19 +403,34 @@ class EdgeTTS(TTSProvider):
             )
         return out
 
+    def _default_voice(self) -> str:
+        """A real voice name for the target locale, looked up rather than guessed.
+
+        This used to build `f"{locale}-Neural"`, which is not a voice any endpoint
+        knows — every dub without `--voice-pool` failed with a confusing 400.
+        """
+        candidates = self.voices(self.settings.target_lang)
+        if not candidates:
+            raise ProviderError(
+                "edge_tts has no voice for "
+                f"'{self.settings.target_lang}' — list them with "
+                f"`dubforge voices --tts edge_tts --lang {self.settings.target_lang}` "
+                "and pass one with --voice-pool"
+            )
+        return candidates[0].id
+
     def synthesize(
         self, text, voice, out_path, style=None, emotion=None, sample_rate=48000
     ) -> SynthResult:
         self.require()
-        import asyncio
 
         import edge_tts
 
-        chosen = voice or f"{locale_for(self.settings.target_lang)}-Neural"
+        chosen = voice or self._default_voice()
         raw = str(Path(out_path).with_suffix(".mp3"))
         rate = self.settings.tts_rate or "+0%"
         communicate = edge_tts.Communicate(text, chosen, rate=rate)
-        asyncio.run(communicate.save(raw))
+        run_coroutine(communicate.save(raw))
         wav = _as_wav(raw, str(out_path), sample_rate)
         Path(raw).unlink(missing_ok=True)
         return SynthResult(

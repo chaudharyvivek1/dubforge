@@ -127,9 +127,42 @@ class Transcript:
         return sum(len(s.speech.split()) for s in self.segments)
 
 
-def file_fingerprint(path: str | Path, extra: str = "") -> str:
-    """Stable cache key: file size + mtime + stage settings (never the whole file)."""
+CHUNK_SIZE = 1 << 20  # 1 MiB: streaming, so a 4 GB film never lands in memory
+
+
+def content_hash(path: str | Path, chunk_size: int = CHUNK_SIZE) -> str:
+    """SHA-256 of the file's bytes, read in chunks.
+
+    This is the only thing that reliably identifies "the same video". A name, a size
+    and an mtime are three lies waiting to happen: two exports of the same lesson can
+    be byte-identical with different names, and two different cuts can share a name,
+    a size and a timestamp to the second.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            block = handle.read(chunk_size)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def file_fingerprint(path: str | Path, extra: str = "", use_content: bool = True) -> str:
+    """Cache key for a media file plus whatever stage settings produced the entry.
+
+    Content hash + size + `extra` (provider, model, language). The file *name* is
+    deliberately excluded: renaming or moving a file must not invalidate a paid
+    transcription, and including it would only add collisions between directories.
+
+    `use_content=False` falls back to size + mtime, for callers that need speed on a
+    huge file and accept the risk; nothing in the pipeline uses that path.
+    """
     p = Path(path)
     stat = p.stat()
-    raw = f"{p.name}:{stat.st_size}:{int(stat.st_mtime)}:{extra}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    if use_content:
+        identity = f"sha256:{content_hash(p)}"
+    else:
+        identity = f"meta:{stat.st_size}:{stat.st_mtime_ns}"
+    raw = f"{identity}:{stat.st_size}:{extra}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]

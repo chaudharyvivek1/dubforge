@@ -9,7 +9,7 @@ Public surface:
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .config import Settings  # noqa: E402
 from .pipeline import DubError, DubPlan, DubResult, dub, plan  # noqa: E402

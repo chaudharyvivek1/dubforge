@@ -256,14 +256,11 @@ class SarvamTranslator(Translator):
         key = self.settings.provider_key("sarvam") or ""
         source_code = "auto" if source in ("auto", "", None) else source
         for seg in segments:
-            text = seg.text
-            for term, rendering in (glossary or {}).items():
-                text = text.replace(term, rendering)
             resp = post(
                 "https://api.sarvam.ai/translate",
                 headers={"api-subscription-key": key, "Content-Type": "application/json"},
                 json_body={
-                    "input": text,
+                    "input": seg.text,
                     "source_language_code": source_code,
                     "target_language_code": target,
                     "model": self.settings.translate_model or "mayura:v1",
@@ -276,10 +273,39 @@ class SarvamTranslator(Translator):
             out = payload.get("translated_text") or payload.get("output")
             if not out:
                 raise ProviderError(f"sarvam returned no translation: {str(payload)[:200]}")
-            seg.target_text = str(out).strip()
+            seg.target_text = apply_glossary(str(out).strip(), glossary)
             seg.translator = "sarvam"
             if instructions and seg.index in instructions:
                 seg.notes.append("sarvam cannot shorten on request; timing handled by atempo")
+
+
+def deepl_endpoint(api_key: str) -> str:
+    """Free keys end in `:fx` and only work on the free host; paid keys only on the pro host.
+
+    Using the wrong one returns 403, which reads like a bad key and wastes an hour.
+    """
+    return (
+        "https://api-free.deepl.com/v2/translate"
+        if api_key.strip().endswith(":fx")
+        else "https://api.deepl.com/v2/translate"
+    )
+
+
+def apply_glossary(text: str, glossary: dict[str, str] | None) -> str:
+    """Pin terminology in the *output*.
+
+    A provider without prompt control cannot be told about a glossary, so the pinned
+    rendering is enforced afterwards: any source term that survived the translation is
+    replaced. Replacing terms in the *input* instead — which this used to do — corrupts
+    the sentence the translator is asked to translate.
+    """
+    if not glossary:
+        return text
+    out = text
+    for term, rendering in glossary.items():
+        if term and term in out:
+            out = out.replace(term, rendering)
+    return out
 
 
 class DeepLTranslator(Translator):
@@ -306,7 +332,7 @@ class DeepLTranslator(Translator):
         if source and source != "auto":
             body["source_lang"] = source.upper()
         resp = post(
-            "https://api-free.deepl.com/v2/translate",
+            deepl_endpoint(key),
             headers={"Authorization": f"DeepL-Auth-Key {key}", "Content-Type": "application/json"},
             json_body=body,
             timeout=self.settings.timeout_s,
@@ -316,7 +342,7 @@ class DeepLTranslator(Translator):
         if len(rows) != len(segments):
             raise ProviderError("deepl returned a different number of lines than it was given")
         for seg, row in zip(segments, rows, strict=False):
-            seg.target_text = str(row.get("text", "")).strip()
+            seg.target_text = apply_glossary(str(row.get("text", "")).strip(), glossary)
             seg.translator = "deepl"
             if instructions and seg.index in instructions:
                 seg.notes.append("deepl cannot shorten on request; timing handled by atempo")

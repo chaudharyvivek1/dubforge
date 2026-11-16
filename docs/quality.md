@@ -107,18 +107,26 @@ enough to survive a phone speaker. −14 for podcast, −23 for broadcast EBU R1
 ## 5. The checks
 
 `qc.json`, printed by `dubforge dub` and in `report.md`. `fail` exits non-zero.
+Fifteen checks, because the failures are independent: a dub can be perfectly timed,
+correctly voiced, loud enough — and silent, if the voice provider answered 200 with
+nothing in the body.
 
 | check | severity | passes when |
 |---|---|---|
-| `every_line_has_audio` | fail | every segment has a rendered file |
+| `every_line_has_audio` | fail | every segment has a rendered file, longer than 0.02 s |
 | `translated` | fail | no segment was touched by the stub translator |
+| `complete_translation` | warn | the provider answered for every line (not just some) |
 | `no_empty_lines` | fail | no empty translation |
 | `timing_fits` | fail | no line overruns its window by more than 0.35 s |
 | `speech_rate` | fail | no line exceeded `--max-speed` |
 | `one_voice_per_speaker` | fail | each speaker used exactly one voice |
-| `loudness` | warn | within ±2.5 LU of the target |
+| `voice_selected` | warn | a voice id was chosen for every line, not the provider default |
+| `dub_is_audible` | fail | the dub track exists, is longer than 0.05 s and peaks above −60 dBFS |
 | `headroom` | warn | peak ≤ −0.5 dBFS |
+| `loudness` | warn | within ±2.5 LU of the target |
 | `duration_preserved` | warn | output within 0.5 s of input |
+| `frame_rate_preserved` | warn | the copied video stream kept its fps |
+| `multiple_audio_tracks` | warn | the source had one audio track (extra tracks are dropped) |
 | `background_kept` | warn | a bed was mixed under the dub |
 
 `fail` means *do not ship*. `warn` means *listen to this one*. A run that ends with
@@ -136,7 +144,8 @@ bilingual SRT exists so that a human can check the words in a couple of minutes.
 | music fights the voice | bed too hot | lower `--bed-gain-db` to −20, keep ducking on |
 | names pronounced wrong | translation, not TTS | `--glossary "ISRO=इसरो"`, or write it phonetically in the target script |
 | flat, robotic delivery | no style hint, or a cheap voice | `--style "warm, unhurried documentary narrator"`, or a better voice |
-| clipped, distorted | headroom | check `peak_db`; lower `--loudness` to −18 |
+| clipped, distorted | headroom | check `peak_db`; lower `--loudness` to −18 (the mix already limits at −0.45 dBFS) |
+| a gap where a line should be | a provider returned empty audio | `dub_is_audible` / the line's warning names it; re-run that line |
 | dub sounds like a phone call | sample rate / bitrate | keep 48 kHz; raise `--audio-bitrate` to 256k |
 
 ## 7. What QC cannot tell you

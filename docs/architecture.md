@@ -135,26 +135,50 @@ someone is talking, and comes back in the pauses.
 long encode: a 40-minute video is muxed in seconds.
 
 ### 11. QC
-`qc.report` writes eleven checks and a metrics block. `ok` is false if any check with
+`qc.report` writes fifteen checks and a metrics block. `ok` is false if any check with
 severity `fail` fails, and the CLI then exits 1. See
 [quality.md](quality.md#the-checks).
 
 ## Files on disk
 
 ```
-dubforge-work/<stem>/
-  source16.wav  source48.wav     decoded audio
-  stems/                          separated bed
-  transcript.json                 ASR cache (fingerprint = file + provider + model)
-  transcript.dub.json             source + translation + timings + speeds
-  tts/00000.wav …                 one file per line
-  dub.wav  dub_norm.wav  mix.wav  before/after mixing
-  *.srt  *.vtt                    reviewable subtitles
-  qc.json  report.md              the verdict, and the story of the run
+dubforge-work/
+  jobs/<stem>-<pathhash>/         one directory per source *path*, locked while in use
+    .lock                         pid + host + start time; stale locks are reclaimed
+    manifest.json                 source, content fingerprint, per-step state
+    source16.wav  source48.wav    decoded audio
+    stems/                        separated bed
+    transcript.dub.json           source + translation + timings + speeds
+    tts/00000.wav …               one file per line
+    dub.wav  dub_norm.wav  mix.wav
+    *.srt  *.vtt                  reviewable subtitles
+    qc.json  report.md            the verdict, and the story of the run
+  cache/<content-key>/transcript.json
+                                  shared across jobs, written atomically under a lock
 ```
 
-The cache key is file size + mtime + provider + model, so re-running with a different
-translator reuses the recognition and does not pay for it twice.
+### Why the workspace looks like that
+
+`jobs/<stem>-<pathhash>` rather than `jobs/<stem>`: a filename is not an identity. Two
+lessons called `lesson.mp4` in different folders used to share a work directory and
+overwrite each other's audio; the path hash makes that impossible.
+
+The lock is what makes concurrent dubs safe. A second job on the same file gets
+`…-2` rather than a shared directory, and a lock left behind by a killed process is
+reclaimed when its pid is gone (or after 24 hours on Windows, where probing a pid is
+not safe).
+
+`manifest.json` is what makes an interrupted run resumable: it records the content
+fingerprint and each finished step. Re-running the same file continues in the same
+directory; re-running after the file changed clears artefacts that belong to bytes
+that no longer exist.
+
+The transcript cache is keyed by **SHA-256 of the file's contents** plus the ASR
+provider, model, source language and diarisation flag — never by name or mtime. Two
+identical copies of a file share one transcription; two different files with the same
+name, size and timestamp share nothing. Writes go through a temp file and `os.replace`,
+so a crash mid-write cannot leave half a JSON document behind, and a corrupt entry is
+treated as a miss rather than an error.
 
 ## Adding a provider
 
@@ -173,6 +197,10 @@ a matching spec, a title and a quality note, and no spec may leak a secret.
 
 * **Paths, not payloads.** No stage returns audio or text in bulk. This is why the
   MCP tools are safe to call from an agent with a small context window.
+* **Identity is content, not metadata.** Cache keys hash bytes. Anything keyed by a
+  filename is a collision waiting for the second file with that name.
+* **Destructive operations re-check their boundary.** Cleanup resolves every path and
+  refuses anything outside the job directory, including through a symlink.
 * **Fail loudly, continue cheaply.** A missing bed or a failed line is a warning; a
   missing key or an untranslated dub is an error. Never a silent success.
 * **Measure, don't assume.** Every duration that matters is measured with ffmpeg

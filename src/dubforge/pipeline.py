@@ -16,16 +16,18 @@ run it" (`plan`). The order matters and is not arbitrary:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import ffmpeg, fit, qc, srt, timeline
-from .config import Settings, workdir_for
+from .config import Settings
 from .media import Segment, Transcript, file_fingerprint
 from .providers import registry
 from .providers.base import ProviderError, ProviderUnavailable
+from .workspace import WorkspaceError, atomic_write_text, open_job
 
 
 class DubError(RuntimeError):
@@ -140,12 +142,17 @@ def plan(source: str | Path, settings: Settings | None = None) -> DubPlan:
     source = str(source)
     if not Path(source).exists():
         raise DubError(f"no such file: {source}")
+    if not Path(source).is_file():
+        raise DubError(f"not a file: {source}")
+    invalid = settings.validate()
+    if invalid:
+        raise DubError("invalid settings:\n  - " + "\n  - ".join(invalid))
     info = ffmpeg.probe(source)
     if not info.has_audio:
         raise DubError(f"{source} has no audio track to dub")
 
     problems: list[str] = []
-    notes: list[str] = []
+    notes: list[str] = list(settings.env_warnings)
     chosen: dict[str, str] = {}
     for kind in (
         "asr",
@@ -226,32 +233,72 @@ def _pick_voices(settings: Settings, tts, speakers: list[str]) -> dict[str, str]
     return mapping
 
 
-def _cache_path(work: Path) -> Path:
-    return work / "transcript.json"
+CACHE_LOCK_TIMEOUT_S = 30.0
 
 
-def _load_cached(work: Path, fingerprint: str) -> Transcript | None:
-    path = _cache_path(work)
+def _cache_file(cache_dir: Path) -> Path:
+    return Path(cache_dir) / "transcript.json"
+
+
+def _load_cached(cache_dir: Path, fingerprint: str) -> Transcript | None:
+    """Read a cache entry, treating anything unexpected as "no entry".
+
+    A corrupt or stale file must never crash a run: it costs one transcription, not
+    the job. The fingerprint is checked again here because the directory name is only
+    a hint — two keys can collide in theory, and a hand-edited file cannot.
+    """
+    path = _cache_file(cache_dir)
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
-    if data.get("fingerprint") != fingerprint:
+    if not isinstance(data, dict) or data.get("fingerprint") != fingerprint:
         return None
-    return Transcript.from_dict(data.get("transcript") or {})
+    payload = data.get("transcript")
+    if not isinstance(payload, dict) or not payload.get("segments"):
+        return None
+    try:
+        return Transcript.from_dict(payload)
+    except (TypeError, KeyError, ValueError):
+        return None
 
 
-def _save_cached(work: Path, fingerprint: str, transcript: Transcript) -> None:
-    _cache_path(work).write_text(
-        json.dumps(
-            {"fingerprint": fingerprint, "transcript": transcript.to_dict()},
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+def _save_cached(cache_dir: Path, fingerprint: str, transcript: Transcript) -> str:
+    """Write the cache atomically, serialised against other processes.
+
+    The lock stops two jobs transcribing the same file from interleaving writes; the
+    atomic replace stops a reader ever seeing half a JSON document, which is what
+    turns a crashed run into a permanently broken cache.
+    """
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    body = json.dumps(
+        {"fingerprint": fingerprint, "transcript": transcript.to_dict()},
+        ensure_ascii=False,
+        indent=2,
     )
+    lock = cache_dir / ".lock"
+    deadline = time.time() + CACHE_LOCK_TIMEOUT_S
+    acquired = False
+    while time.time() < deadline:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            time.sleep(0.05)
+            continue
+        except OSError:
+            break  # read-only or odd filesystem: fall through to an unlocked write
+        os.close(fd)
+        acquired = True
+        break
+    try:
+        atomic_write_text(_cache_file(cache_dir), body)
+    finally:
+        if acquired:
+            lock.unlink(missing_ok=True)
+    return str(_cache_file(cache_dir))
 
 
 def _write_report(
@@ -314,6 +361,24 @@ def dub(
     settings = settings or Settings()
     say = _log(log)
     source = str(source)
+
+    # Guard the destination before spending anything: the last step of the pipeline is
+    # a mux, and ffmpeg's refusal to write over its own input arrives after every
+    # provider has been paid for. Failing here costs nothing.
+    if output is not None:
+        requested = Path(output).expanduser()
+        try:
+            same = requested.resolve() == Path(source).resolve()
+        except OSError:
+            same = False
+        if same:
+            raise DubError(
+                f"output would overwrite the source file ({source}). "
+                "Choose a different path, or let dubforge name it for you."
+            )
+        if requested.exists() and requested.is_dir():
+            raise DubError(f"output path is a directory: {requested}")
+
     plan_obj = plan(source, settings)
     if plan_obj.problems:
         raise DubError(
@@ -330,8 +395,20 @@ def dub(
 
     info = ffmpeg.probe(source)
     stem = Path(source).stem
-    work = workdir_for(settings, stem)
+
+    asr_for_key = registry.resolve("asr", settings)
+    fingerprint = file_fingerprint(
+        source,
+        f"asr={asr_for_key.name}:{settings.asr_model}:lang={settings.source_lang}:diarize=1",
+    )
+    try:
+        job = open_job(settings.workdir, source, fingerprint=fingerprint, cache_key=fingerprint)
+    except (WorkspaceError, OSError) as exc:
+        raise DubError(f"cannot prepare a work directory under {settings.workdir}: {exc}") from exc
+    work = job.path
     result = DubResult(workdir=str(work), plan=plan_obj.to_dict(), warnings=list(plan_obj.notes))
+    result.warnings.extend(job.notes)
+    job.write_manifest(output=str(output) if output else "", target_lang=settings.target_lang)
 
     def step(name: str, fn, *args, **kwargs):
         started = time.time()
@@ -374,11 +451,8 @@ def dub(
             result.warnings.append(f"separation failed, continuing without a bed: {exc}")
 
     # 3 — transcribe -----------------------------------------------------------
-    asr = registry.resolve("asr", settings)
-    fingerprint = file_fingerprint(
-        source, f"{asr.name}:{settings.asr_model}:{settings.source_lang}"
-    )
-    transcript = _load_cached(work, fingerprint) if settings.cache else None
+    asr = asr_for_key
+    transcript = _load_cached(job.cache_dir, fingerprint) if settings.cache else None
     if transcript is not None:
         result.steps.append(
             Step("transcribe", 0.0, f"reused cached transcript ({len(transcript.segments)} lines)")
@@ -396,7 +470,8 @@ def dub(
             )
         )
         if settings.cache:
-            _save_cached(work, fingerprint, transcript)
+            _save_cached(job.cache_dir, fingerprint, transcript)
+        job.mark("transcribe", True, f"{len(transcript.segments)} lines")
 
     if not transcript.segments:
         raise DubError("no speech was found in the audio. Check the file, or pass --transcript.")
@@ -506,9 +581,23 @@ def dub(
                 style=seg.style,
                 emotion=settings.emotion or None,
             )
+            # A provider can answer 200 with a zero-byte body or a silent file. Left
+            # unchecked, that line "succeeds", the timeline gets a 0s clip, and QC
+            # reports a dub with a hole in it that nobody notices until playback.
+            if not rendered.path or not Path(rendered.path).exists():
+                raise ProviderError(f"line {seg.index}: provider returned no audio file")
+            if Path(rendered.path).stat().st_size < 128:
+                raise ProviderError(
+                    f"line {seg.index}: provider returned an empty audio file ({Path(rendered.path).stat().st_size} bytes)"
+                )
+            measured = ffmpeg.duration_of(rendered.path)
+            if measured is None or measured < 0.02:
+                raise ProviderError(
+                    f"line {seg.index}: provider returned {measured or 0:.3f}s of audio — nothing to place"
+                )
             seg.audio_path = rendered.path
-            seg.raw_duration = rendered.duration or ffmpeg.duration_of(rendered.path)
-        except (ProviderError, ffmpeg.FFmpegError) as exc:
+            seg.raw_duration = rendered.duration or measured
+        except (ProviderError, ffmpeg.FFmpegError, OSError) as exc:
             failures.append(f"line {seg.index}: {exc}")
             continue
         window = seg.window or seg.duration
@@ -538,6 +627,7 @@ def dub(
         result.warnings.append(
             f"{len(failures)} line(s) failed to synthesise: " + "; ".join(failures[:3])
         )
+    job.mark("synthesise", not failures, f"{len(clips)}/{len(segments)} lines")
 
     # 8 — assemble and mix -----------------------------------------------------
     dub_track = step(
@@ -613,7 +703,7 @@ def dub(
     result.output = output
     result.audio = str(Path(work) / "dub_norm.wav")
     result.transcript_json = transcript.save(work / "transcript.dub.json")
-    result.subtitles = srt.write_all(segments, work, stem)
+    result.subtitles = srt.write_all(segments, work, stem, lang=settings.target_lang)
     result.qc = qc.report(
         segments,
         dub_audio=normalised,
@@ -624,12 +714,24 @@ def dub(
         max_speed=settings.max_speed,
         loudness_target=settings.loudness_lufs,
         bed_used=bed_used,
+        source_info=info,
     )
     qc.save(result.qc, work / "qc.json")
     result.report = _write_report(result, plan_obj, settings, transcript)
+    job.finished(
+        output=output,
+        qc_ok=result.qc.get("ok"),
+        failures=result.qc.get("failures", []),
+        warnings=result.qc.get("warnings", []),
+        segments=len(segments),
+        rendered=len(clips),
+    )
     say(f"· done: {output}")
     if not settings.keep_work:
-        _cleanup(work, keep=[Path(output).name])
+        removed = job.cleanup(keep=("transcript.dub.json", "qc.json", "report.md"))
+        if removed:
+            say(f"· cleaned intermediates: {', '.join(removed)}")
+    job.release()
     return result
 
 
@@ -670,13 +772,3 @@ def _resplit(segments: list[Segment], max_seconds: float, max_chars: int) -> lis
     for i, seg in enumerate(out):
         seg.index = i
     return out
-
-
-def _cleanup(work: Path, keep: list[str]) -> None:
-    """Drop the intermediates, keep anything a user might want back."""
-    for pattern in ("*.part*.wav", "tts", "stems"):
-        target = work / pattern
-        if target.is_dir():
-            shutil.rmtree(target, ignore_errors=True)
-        elif target.exists():
-            target.unlink(missing_ok=True)

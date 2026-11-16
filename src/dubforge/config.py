@@ -8,10 +8,26 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 ENV_PREFIX = "DUBFORGE_"
+
+LANGUAGE_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$")
+
+
+def is_language_code(code: str, allow_auto: bool = False) -> bool:
+    """`hi`, `ta-IN`, `pt-BR` — not `Hindi (India)` and not a sentence."""
+    if not code:
+        return False
+    if allow_auto and code.lower() == "auto":
+        return True
+    return bool(LANGUAGE_RE.match(code.strip()))
+
+
+class _BadEnv(ValueError):
+    """An environment variable that cannot be coerced to its field's type."""
 
 
 @dataclass
@@ -70,6 +86,9 @@ class Settings:
     keep_work: bool = True
     timeout_s: int = 600  # per provider HTTP call
 
+    # --- diagnostics (filled by from_env; never set by hand) -------------------
+    env_warnings: list[str] = field(default_factory=list)
+
     # ------------------------------------------------------------------ helpers
     def key(self, *env_names: str) -> str | None:
         """First non-empty environment variable among `env_names`."""
@@ -100,27 +119,61 @@ class Settings:
     def from_env(cls, **overrides) -> Settings:
         base = cls()
         env_values: dict = {}
+        warnings: list[str] = []
         for f in fields(cls):
-            raw = os.environ.get(f"{ENV_PREFIX}{f.name.upper()}")
+            var = f"{ENV_PREFIX}{f.name.upper()}"
+            raw = os.environ.get(var)
             if raw is None or raw == "":
                 continue
             default = getattr(base, f.name)
             try:
-                if isinstance(default, bool):
-                    env_values[f.name] = raw.strip().lower() in {"1", "true", "yes", "on"}
-                elif isinstance(default, int):
-                    env_values[f.name] = int(raw)
-                elif isinstance(default, float):
-                    env_values[f.name] = float(raw)
-                elif isinstance(default, dict):
-                    env_values[f.name] = json.loads(raw)
-                elif isinstance(default, list):
-                    env_values[f.name] = [x for x in raw.split(",") if x.strip()]
-                else:
-                    env_values[f.name] = raw
-            except (ValueError, json.JSONDecodeError):
-                continue  # a malformed env var must not stop a dub
-        return cls(**{**env_values, **{k: v for k, v in overrides.items() if v is not None}})
+                env_values[f.name] = _coerce(raw, default)
+            except _BadEnv:
+                # A malformed variable must not stop a dub, but it must not be silent
+                # either: the warning reaches `doctor` and the run's warnings list.
+                warnings.append(
+                    f"{var}={raw!r} is not valid for {f.name} "
+                    f"(expected {type(default).__name__ if default is not None else 'number, bool or JSON'}); ignored"
+                )
+        settings = cls(**{**env_values, **{k: v for k, v in overrides.items() if v is not None}})
+        settings.env_warnings = warnings
+        return settings
+
+    # ------------------------------------------------------------------ checks
+    def validate(self) -> list[str]:
+        """Problems a user can fix. Empty means the settings are usable."""
+        problems: list[str] = []
+        if not is_language_code(self.target_lang):
+            problems.append(
+                f"target language {self.target_lang!r} is not a language code like 'hi' or 'ta-IN'"
+            )
+        if (
+            self.source_lang
+            and self.source_lang != "auto"
+            and not is_language_code(self.source_lang)
+        ):
+            problems.append(
+                f"source language {self.source_lang!r} is not a language code or 'auto'"
+            )
+        for name, value, low, high in (
+            ("max_speed", self.max_speed, 0.5, 2.0),
+            ("min_speed", self.min_speed, 0.5, 1.0),
+            ("rewrite_rounds", self.rewrite_rounds, 0, 5),
+            ("tail_gap_s", self.tail_gap_s, 0.0, 1.0),
+            ("loudness_lufs", self.loudness_lufs, -40.0, -5.0),
+            ("true_peak_db", self.true_peak_db, -9.0, 0.0),
+            ("bed_gain_db", self.bed_gain_db, -60.0, 6.0),
+            ("voice_gain_db", self.voice_gain_db, -60.0, 12.0),
+            ("max_segment_s", self.max_segment_s, 1.0, 120.0),
+            ("timeout_s", self.timeout_s, 5, 3600),
+        ):
+            if not low <= value <= high:
+                problems.append(f"{name}={value} is outside {low}–{high}")
+        if self.max_segment_chars < 20:
+            problems.append("max_segment_chars must be at least 20")
+        if self.speech_cps is not None and not 1.0 <= self.speech_cps <= 60.0:
+            problems.append(f"speech_cps={self.speech_cps} is outside 1–60 characters per second")
+        return problems
 
     @classmethod
     def load(cls, path: str | Path | None, **overrides) -> Settings:
@@ -130,7 +183,51 @@ class Settings:
         return cls.from_env(**{**data, **{k: v for k, v in overrides.items() if v is not None}})
 
 
+def _coerce(raw: str, default) -> object:
+    """Turn an environment string into the type the field already has.
+
+    A field typed `float | None` defaults to `None`, which tells us nothing about the
+    intended type — that was a real bug: `DUBFORGE_SPEECH_CPS=12.5` used to arrive as
+    the string "12.5" and blow up in the timing arithmetic. For those fields the value
+    is parsed as JSON (number, bool, list, object) and only falls back to a string.
+    """
+    text = raw.strip()
+    if isinstance(default, bool):
+        return text.lower() in {"1", "true", "yes", "on"}
+    if isinstance(default, int):
+        try:
+            return int(text)
+        except ValueError as exc:
+            raise _BadEnv(text) from exc
+    if isinstance(default, float):
+        try:
+            return float(text)
+        except ValueError as exc:
+            raise _BadEnv(text) from exc
+    if isinstance(default, dict):
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise _BadEnv(text) from exc
+        if not isinstance(value, dict):
+            raise _BadEnv(text)
+        return value
+    if isinstance(default, list):
+        return [item.strip() for item in text.split(",") if item.strip()]
+    if isinstance(default, str):
+        return raw
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return raw
+
+
 def workdir_for(settings: Settings, name: str = "job") -> Path:
+    """Legacy helper: `<workdir>/<name>`.
+
+    Kept for compatibility, but the pipeline no longer uses it — see
+    `dubforge.workspace.open_job`, which isolates jobs by source path and locks them.
+    """
     path = Path(settings.workdir) / name
     path.mkdir(parents=True, exist_ok=True)
     return path

@@ -121,6 +121,8 @@ class MediaInfo:
     audio_codec: str = ""
     sample_rate: int = 0
     channels: int = 0
+    audio_streams: int = 0
+    video_streams: int = 0
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -161,6 +163,10 @@ def probe(path: str | Path) -> MediaInfo:
         h, mi, s = m.groups()
         info.duration = int(h) * 3600 + int(mi) * 60 + float(s)
     for kind, codec, rest in _STREAM_RE.findall(text):
+        if kind == "Video":
+            info.video_streams += 1
+        else:
+            info.audio_streams += 1
         if kind == "Video" and not info.has_video:
             info.has_video = True
             info.video_codec = codec
@@ -207,7 +213,12 @@ def extract_audio(
     args += ["-i", str(src)]
     if length is not None:
         args += ["-t", f"{length:.3f}"]
+    # `-map 0:a:0` is not optional: without it ffmpeg picks the "best" audio stream,
+    # which on a multi-track file (commentary, dubbed track, 5.1 + stereo) is not
+    # necessarily the one the picture plays. Dubbing the wrong track is silent failure.
     args += [
+        "-map",
+        "0:a:0",
         "-vn",
         "-ac",
         str(channels),
@@ -422,6 +433,11 @@ def assemble_dub(
     gap after it instead of pushing every later line out of sync.
     """
     dst = Path(dst)
+    if total_duration <= 0:
+        raise ValueError(f"total_duration must be positive, got {total_duration}")
+    # Placement, not concatenation: order by start time so a caller that hands clips
+    # in any order still gets a correct timeline.
+    clips = sorted(((str(path), float(start)) for path, start in clips), key=lambda c: c[1])
     if not clips:
         return silence(dst, max(total_duration, 0.1), sample_rate)
 
@@ -498,18 +514,34 @@ def duck_and_mix(
 
     This is what separates a dub from a re-voiced karaoke track: the bed keeps the
     laugh, the door slam and the score, and dips only while someone is talking.
+
+    The dub alone is already normalised with a true-peak ceiling; the bed is added on
+    top, so a limiter closes the graph — otherwise the sum can clip on a phone speaker
+    even though both inputs were clean.
     """
-    graph = (
-        f"[0:a]volume={voice_gain_db}dB,aresample=48000,aformat=channel_layouts=stereo,asplit=2[v1][v2];"
-        f"[1:a]volume={bed_gain_db}dB,aresample=48000,aformat=channel_layouts=stereo[b];"
+    voice_chain = (
+        f"[0:a]volume={voice_gain_db}dB,aresample=48000,"
+        "aformat=sample_fmts=fltp:channel_layouts=stereo"
+    )
+    bed_chain = (
+        f"[1:a]volume={bed_gain_db}dB,aresample=48000,"
+        "aformat=sample_fmts=fltp:channel_layouts=stereo[b]"
     )
     if duck:
-        graph += (
+        # asplit is required: a filter output may be consumed once, and the voice is
+        # used both as the sidechain key and as a mix input.
+        graph = (
+            f"{voice_chain},asplit=2[v1][v2];{bed_chain};"
             "[b][v1]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=320:makeup=1[bd];"
-            "[v2][bd]amix=inputs=2:normalize=0[mix]"
+            "[v2][bd]amix=inputs=2:normalize=0[sum];"
+            "[sum]alimiter=limit=0.95:level=false[mix]"
         )
     else:
-        graph += "[v2][b]amix=inputs=2:normalize=0[mix]"
+        graph = (
+            f"{voice_chain}[v];{bed_chain};"
+            "[v][b]amix=inputs=2:normalize=0[sum];"
+            "[sum]alimiter=limit=0.95:level=false[mix]"
+        )
     args = ["-i", str(voice), "-i", str(bed), "-filter_complex", graph, "-map", "[mix]"]
     if total_duration:
         args += ["-t", f"{total_duration:.3f}"]

@@ -79,9 +79,17 @@ code.
 
 ### Is the transcript cached?
 
-Yes, keyed by file size + mtime + provider + model. Re-running with a different
-translator or voice does not re-pay for recognition. `--no-cache` ignores it; moving
-the file invalidates it.
+Yes, keyed by **SHA-256 of the file's contents** plus the ASR provider, model, source
+language and diarisation flag. Re-running with a different translator or voice does not
+re-pay for recognition; moving or renaming the file does not either; two different files
+that share a name, a size and a timestamp never collide. `--no-cache` ignores it.
+
+### Where do the working files go?
+
+`<workdir>/jobs/<stem>-<hash>/`, one directory per source path, with a lock so two dubs
+of the same file cannot collide. An interrupted run resumes in the same directory —
+`manifest.json` says which steps finished. Transcripts live in
+`<workdir>/cache/<content-key>/` and are shared between jobs.
 
 ### Why does QC say "FAIL: translated" on the demo?
 

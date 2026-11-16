@@ -111,4 +111,20 @@ Rules that are not negotiable in an adapter:
 * never log or return a key;
 * raise `ProviderError` with a message a user can act on, never a bare traceback;
 * retry 429/5xx, never retry a 400 (a bad request will stay bad);
-* return a measured duration when you can, and `None` when you cannot.
+* return a measured duration when you can, and `None` when you cannot;
+* **a 200 with an empty body is a failure.** The pipeline rejects a render shorter than
+  0.02 s or under 128 bytes, so a provider that "succeeds" with nothing produces a
+  named failure for that line instead of a silent gap in the dub;
+* **async APIs must be callable from a running loop.** The MCP server is async, so
+  adapters that wrap a coroutine library (`edge_tts`) go through
+  `run_coroutine()`, which starts a short-lived thread when a loop is already running.
+
+Adapter notes worth knowing before you debug:
+
+| Adapter | Detail |
+|---|---|
+| `deepl` | Free keys end in `:fx` and only work on `api-free.deepl.com`; paid keys only on `api.deepl.com`. The adapter picks the host from the key — using the wrong one returns 403, which reads like a bad key. |
+| `sarvam` (translate) | Has no prompt control, so the glossary is enforced **after** translation: a source term that survived is replaced with the pinned rendering. The source text is never rewritten before it is sent. |
+| `deepgram` | Query parameters are URL-encoded and the first audio stream is used explicitly (`-map 0:a:0`), never ffmpeg's "best" guess. |
+| `edge_tts` | Free, keyless, unofficial. No SLA; check the terms before commercial use. |
+| `synclabs` | Needs public HTTP(S) URLs for both inputs and does not upload for you. The job is polled for up to an hour. |

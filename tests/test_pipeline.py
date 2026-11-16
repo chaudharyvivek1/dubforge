@@ -166,3 +166,204 @@ def test_stretch_in_place_is_supported(demo_clip, tmp_path):
     assert after == pytest.approx(before / 1.2, rel=0.06)
     assert Path(audio).exists()
     assert not (tmp_path / "in.stretch.wav").exists()
+
+
+# --------------------------------------------------------------------- regressions
+
+
+@needs_ffmpeg
+def test_second_run_reuses_the_cached_transcript(demo_clip, tmp_path):
+    """The cache must survive a second run and be keyed by content + ASR settings."""
+    settings = Settings(
+        source_lang="en",
+        target_lang="hi",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="none",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "work"),
+        cache=True,
+    )
+    first = pipeline.dub(demo_clip, settings, output=tmp_path / "one.mp4")
+    assert any("cached" in step.detail for step in first.steps) is False
+    second = pipeline.dub(demo_clip, settings, output=tmp_path / "two.mp4")
+    assert any("cached" in step.detail for step in second.steps), [s.detail for s in second.steps]
+    # and the job directory is the same one, resumed rather than duplicated
+    assert first.workdir == second.workdir
+
+
+@needs_ffmpeg
+def test_a_changed_asr_configuration_transcribes_again(demo_clip, tmp_path):
+    base = {
+        "source_lang": "en",
+        "target_lang": "hi",
+        "translator": "stub",
+        "tts": "stub",
+        "separator": "none",
+        "script": demo.DEMO_SCRIPT,
+        "workdir": str(tmp_path / "work"),
+        "cache": True,
+    }
+    pipeline.dub(demo_clip, Settings(asr="stub", **base), output=tmp_path / "a.mp4")
+    other = pipeline.dub(
+        demo_clip,
+        Settings(asr="stub", asr_model="a-different-model", **base),
+        output=tmp_path / "b.mp4",
+    )
+    assert not any("cached" in step.detail for step in other.steps)
+
+
+@needs_ffmpeg
+def test_subtitles_are_named_for_the_target_language(demo_clip, tmp_path):
+    settings = Settings(
+        source_lang="en",
+        target_lang="ta",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="none",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "work"),
+        cache=False,
+    )
+    result = pipeline.dub(demo_clip, settings, output=tmp_path / "t.mp4")
+    assert result.subtitles["target_srt"].endswith(".ta.srt")
+    assert Path(result.subtitles["target_srt"]).exists()
+
+
+@needs_ffmpeg
+def test_manifest_records_a_finished_job(demo_clip, tmp_path):
+    settings = Settings(
+        source_lang="en",
+        target_lang="hi",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="none",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "work"),
+        cache=False,
+    )
+    result = pipeline.dub(demo_clip, settings, output=tmp_path / "m.mp4")
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["state"] == "done"
+    assert manifest["fingerprint"]
+    assert manifest["steps"]["transcribe"]["ok"] is True
+    assert not (Path(result.workdir) / ".lock").exists(), "the job lock must be released"
+
+
+@needs_ffmpeg
+def test_multiple_audio_tracks_are_reported(demo_clip, tmp_path):
+    """A second audio track must not be silently dropped without a word in QC."""
+    second = tmp_path / "second.wav"
+    ffmpeg.write_tone_sequence(str(second), [(0.0, 9.0, 880.0)], demo.TOTAL)
+    multi = tmp_path / "multi.mp4"
+    ffmpeg.run(
+        [
+            "-i",
+            demo_clip,
+            "-i",
+            str(second),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(multi),
+        ]
+    )
+    info = ffmpeg.probe(multi)
+    assert info.audio_streams == 2
+
+    settings = Settings(
+        source_lang="en",
+        target_lang="hi",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="none",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "work"),
+        cache=False,
+    )
+    result = pipeline.dub(multi, settings, output=tmp_path / "out.mp4")
+    checks = {c["check"]: c for c in result.qc["checks"]}
+    assert checks["multiple_audio_tracks"]["severity"] == "warn"
+    assert result.qc["metrics"]["source_audio_streams"] == 2
+
+
+@needs_ffmpeg
+def test_mix_does_not_clip_with_a_hot_bed(demo_clip, tmp_path):
+    hot = tmp_path / "hot.wav"
+    ffmpeg.write_tone_sequence(str(hot), [(0.0, demo.TOTAL, 180.0)], demo.TOTAL)
+    voice = tmp_path / "voice.wav"
+    ffmpeg.write_tone_sequence(str(voice), [(0.0, demo.TOTAL, 440.0)], demo.TOTAL)
+    out = tmp_path / "mix.wav"
+    ffmpeg.duck_and_mix(
+        str(voice),
+        str(hot),
+        str(out),
+        voice_gain_db=6,
+        bed_gain_db=6,
+        duck=True,
+        total_duration=demo.TOTAL,
+    )
+    peak = ffmpeg.peak_db(out)
+    assert peak is not None and peak <= -0.4, f"the limiter did not hold: peak {peak} dBFS"
+
+
+@needs_ffmpeg
+def test_a_provider_that_returns_no_audio_fails_the_line(demo_clip, tmp_path):
+    """An empty 200 response must be a failure, not a silent gap in the timeline."""
+    from dubforge.providers import registry as real_registry
+    from dubforge.providers.base import SynthResult
+
+    class BrokenTTS:
+        name = "broken"
+        spec = type("S", (), {"name": "broken", "kind": "tts", "verified": False})()
+
+        def voices(self, language=""):
+            return []
+
+        def synthesize(self, text, voice, out_path, style=None, emotion=None, sample_rate=48000):
+            Path(out_path).write_bytes(b"")  # a 200 with nothing in it
+            return SynthResult(path=str(out_path), duration=0.0, provider="broken")
+
+    class Shim:
+        def __getattr__(self, item):
+            return getattr(real_registry, item)
+
+        def resolve(self, kind, settings=None, requested=None):
+            if kind == "tts":
+                return BrokenTTS()
+            return real_registry.resolve(kind, settings, requested)
+
+    settings = Settings(
+        source_lang="en",
+        target_lang="hi",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="none",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "work"),
+        cache=False,
+    )
+    import dubforge.pipeline as pipeline_module
+
+    original = pipeline_module.registry
+    pipeline_module.registry = Shim()
+    try:
+        with pytest.raises(pipeline.DubError) as exc:
+            pipeline_module.dub(demo_clip, settings, output=tmp_path / "never.mp4")
+    finally:
+        pipeline_module.registry = original
+    assert "no line could be synthesised" in str(exc.value)
+    assert "empty audio file" in str(exc.value) or "nothing to place" in str(exc.value)

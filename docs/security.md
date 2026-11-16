@@ -76,6 +76,37 @@ lawful basis. For those cases:
 4. check your provider's retention policy: several vendors keep uploaded audio for a
    window for abuse review, and some offer zero-retention settings on request.
 
+## The trust boundary for agent-supplied paths
+
+The MCP server runs locally, so an agent can ask it to read and write files. The
+boundary is deliberately narrow:
+
+* **Inputs are validated, not trusted.** Every path is expanded, checked for existence
+  and type, and probed before use; a language code must match `^[a-z]{2,3}(-[A-Za-z]{2,4})?$`;
+  numbers are range-checked; `glossary` and `voice_map` are parsed with an error that
+  says what was wrong.
+* **Writes stay in the workspace.** Artefacts go under `<workdir>/jobs/<stem>-<hash>/`,
+  and every write goes through `JobWorkspace.file()`, which refuses a path that resolves
+  outside that directory (`../`, an absolute path, a symlink).
+* **Cleanup re-checks the boundary.** `cleanup()` resolves each candidate and skips
+  anything outside the job directory, so a symlink planted in the work directory cannot
+  turn `--no-keep-work` into a delete somewhere else.
+* **The output path is the user's choice, with one guard.** It may be anywhere, but it
+  may not be the source file — caught before the first paid API call, not by ffmpeg at
+  the last step.
+* **Errors are structured and quiet.** Every tool returns
+  `{"ok": false, "error": {"code", "message", "hint"}}`. Codes are stable
+  (`invalid_argument`, `missing_file`, `unsupported_media`, `no_provider`,
+  `provider_error`, `io_error`, `internal_error`); messages are truncated to 600
+  characters and never contain a header, a key or a stack trace.
+* **No shell.** Every subprocess call takes an argument list; `shell=True`,
+  `os.system` and `os.popen` do not appear anywhere in the package, and a test enforces
+  that.
+
+What this boundary does **not** give you: an agent that can already write files on the
+machine can still pass a path you would rather it did not. Run the server as a user
+whose filesystem access matches what you are willing to grant it.
+
 ## Uploads for lip sync
 
 `synclabs` fetches URLs. dubforge deliberately does **not** upload your footage to a
@@ -95,6 +126,11 @@ the expiry, and you delete it afterwards.
   in this pipeline.
 * **A very large file.** Everything is local disk and ffmpeg; there is no size limit
   imposed and none enforced. Watch the work directory on a small laptop.
+* **A shared work directory.** The transcript cache is keyed by file *content*, so two
+  jobs that happen to process identical bytes will share a transcription. That is
+  intended, and it is why the key includes the ASR provider, model, language and
+  diarisation flag — but if you keep unrelated clients' material under one `--workdir`,
+  give each client their own.
 
 ## Reporting a problem
 

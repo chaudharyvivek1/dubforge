@@ -41,7 +41,7 @@ jobs:
       - name: Install dubforge
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,mcp]"
 
       - name: Lint
         run: |
@@ -54,20 +54,36 @@ jobs:
       - name: Tests
         run: python -m pytest -q --durations=10
 
-      - name: Demo smoke test (offline, real ffmpeg)
-        run: python -m dubforge demo --out-dir ci-demo --json > ci-demo.json || true
-        shell: bash
+      # The demo is *supposed* to fail QC (stub translation + tone voice) and exit 1.
+      # This gate distinguishes that intended failure from a crash, empty JSON, a
+      # missing mp4, an unplayable container or a silent track. No `|| true` anywhere:
+      # suppressing the exit code is exactly how a broken pipeline ships.
+      - name: Offline demo gate (expected QC failure, verified output)
+        run: python scripts/ci_demo_check.py --out-dir ci-demo
 
-      - name: Check the demo produced a playable file
+      - name: MCP server registers all tools and refuses bad input cleanly
         run: |
           python - <<'PY'
-          import json, pathlib, sys
-          from dubforge import ffmpeg
-          data = json.loads(pathlib.Path("ci-demo.json").read_text())
-          info = ffmpeg.probe(data["output"])
-          assert info.has_video and info.has_audio, info
-          assert data["qc"]["metrics"]["rendered"] == 3
-          print("demo ok:", info.summary)
+          import asyncio, json
+          from fastmcp import Client
+          from dubforge.server import build_server
+
+          EXPECTED = {"dubforge_doctor", "list_providers", "probe_media", "plan_dub",
+                      "transcribe_video", "dub_video", "get_qc", "list_voices",
+                      "write_subtitles", "dubforge_version"}
+
+          async def main():
+              async with Client(build_server()) as client:
+                  names = {tool.name for tool in await client.list_tools()}
+                  assert names == EXPECTED, names ^ EXPECTED
+                  bad = await client.call_tool("plan_dub", {"path": "/nope.mp4", "target_lang": "hi"})
+                  payload = json.loads(bad.content[0].text)
+                  assert payload["ok"] is False
+                  assert payload["error"]["code"] == "missing_file", payload
+                  assert "Traceback" not in bad.content[0].text
+                  print("mcp ok:", len(names), "tools, structured errors")
+
+          asyncio.run(main())
           PY
 
       - uses: actions/upload-artifact@v4
@@ -75,10 +91,11 @@ jobs:
         with:
           name: demo-${{ matrix.os }}-${{ matrix.python }}
           path: |
-            ci-demo.json
             ci-demo/*.mp4
-            ci-demo/work/*/qc.json
-            ci-demo/work/*/report.md
+            ci-demo/*.json
+            ci-demo/work/**/qc.json
+            ci-demo/work/**/report.md
+            ci-demo/work/**/manifest.json
           retention-days: 7
 
   build:
