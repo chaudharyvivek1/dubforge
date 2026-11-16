@@ -7,6 +7,7 @@ never its value, which is what `dubforge doctor` shows.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from dataclasses import dataclass, field, fields
@@ -26,8 +27,16 @@ def is_language_code(code: str, allow_auto: bool = False) -> bool:
     return bool(LANGUAGE_RE.match(code.strip()))
 
 
+_TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
+_FALSE_WORDS = frozenset({"0", "false", "no", "off"})
+
+
 class _BadEnv(ValueError):
     """An environment variable that cannot be coerced to its field's type."""
+
+
+class ConfigError(ValueError):
+    """A configuration file that cannot be used, with a message that says why."""
 
 
 @dataclass
@@ -177,10 +186,82 @@ class Settings:
 
     @classmethod
     def load(cls, path: str | Path | None, **overrides) -> Settings:
+        """Read a JSON settings file, then apply the environment and explicit overrides.
+
+        Every failure here is a `ConfigError` with the file, the key and what was
+        expected — a configuration mistake must never surface as a `TypeError` from
+        three frames deeper, halfway through a dub.
+        """
         data: dict = {}
-        if path and Path(path).exists():
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-        return cls.from_env(**{**data, **{k: v for k, v in overrides.items() if v is not None}})
+        if path:
+            data = _read_config_file(Path(path))
+        merged = {**data, **{k: v for k, v in overrides.items() if v is not None}}
+        try:
+            settings = cls.from_env(**merged)
+        except TypeError as exc:  # unknown key that slipped past validation
+            raise ConfigError(f"unexpected configuration key: {exc}") from exc
+        problems = settings.validate()
+        if problems:
+            raise ConfigError("invalid configuration:\n  - " + "\n  - ".join(problems))
+        return settings
+
+
+def _reject_constant(value: str):
+    """JSON allows NaN and Infinity; settings do not."""
+    raise ConfigError(f"{value} is not a valid number in a configuration file")
+
+
+def _read_config_file(path: Path) -> dict:
+    if not path.exists():
+        raise ConfigError(f"configuration file not found: {path}")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"cannot read {path}: {exc}") from exc
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw, parse_constant=_reject_constant)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(
+            f"{path} is not valid JSON: line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"{path} must contain a JSON object at the top level, got {type(data).__name__}"
+        )
+
+    known = {f.name for f in fields(Settings)} - {"env_warnings"}
+    unknown = sorted(set(data) - known)
+    if unknown:
+        raise ConfigError(
+            f"{path} has unknown key(s): {', '.join(unknown)}. "
+            f"Valid keys: {', '.join(sorted(known))}"
+        )
+    bad_types = []
+    for key, value in data.items():
+        default = getattr(Settings(), key)
+        if isinstance(default, bool) and not isinstance(value, bool):
+            bad_types.append(f"{key} must be true or false, got {type(value).__name__}")
+        elif (
+            isinstance(default, int)
+            and not isinstance(default, bool)
+            and not isinstance(value, int)
+        ):
+            bad_types.append(f"{key} must be an integer, got {type(value).__name__}")
+        elif isinstance(default, float) and not isinstance(value, (int, float)):
+            bad_types.append(f"{key} must be a number, got {type(value).__name__}")
+        elif isinstance(default, str) and not isinstance(value, str):
+            bad_types.append(f"{key} must be a string, got {type(value).__name__}")
+        elif isinstance(default, list) and not isinstance(value, list):
+            bad_types.append(f"{key} must be a list, got {type(value).__name__}")
+        elif isinstance(default, dict) and not isinstance(value, dict):
+            bad_types.append(f"{key} must be an object, got {type(value).__name__}")
+        elif isinstance(value, float) and not math.isfinite(value):
+            bad_types.append(f"{key} must be a finite number, got {value}")
+    if bad_types:
+        raise ConfigError(f"{path} has invalid values:\n  - " + "\n  - ".join(bad_types))
+    return data
 
 
 def _coerce(raw: str, default) -> object:
@@ -193,7 +274,15 @@ def _coerce(raw: str, default) -> object:
     """
     text = raw.strip()
     if isinstance(default, bool):
-        return text.lower() in {"1", "true", "yes", "on"}
+        # A boolean that is not on this list is an error, not `False`. The old
+        # `in {"1","true","yes","on"}` turned a typo ("flase", "maybe") into False,
+        # which silently switches off caching, background preservation or ducking.
+        lowered = text.lower()
+        if lowered in _TRUE_WORDS:
+            return True
+        if lowered in _FALSE_WORDS:
+            return False
+        raise _BadEnv(text)
     if isinstance(default, int):
         try:
             return int(text)

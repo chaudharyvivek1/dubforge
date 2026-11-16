@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-56%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-227%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-10%20tools-6f42c1)](src/dubforge/server.py)
@@ -268,6 +268,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/platforms.md](docs/platforms.md) | Linux, macOS, Windows, Docker, CPU-only sandboxes, hardware guidance |
 | [docs/security.md](docs/security.md) | keys, consent, student footage, what leaves the machine, hostile transcripts |
 | [skill/SKILL.md](skill/SKILL.md) | the agent skill: workflow, provider choice, failure modes, review loop |
+| [docs/assessment.md](docs/assessment.md) | architecture, feature and gap inventory, dependency/licence and security assessment, phased roadmap |
 | [ROADMAP.md](ROADMAP.md) | what is next, and what is explicitly not planned |
 | [CREDITS.md](CREDITS.md) | every project and vendor this stands on, with licences |
 | [CHANGELOG.md](CHANGELOG.md) | what changed, and the known limitations of each release |

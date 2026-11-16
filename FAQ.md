@@ -128,7 +128,9 @@ security model is yours to define.
 
 ### Does it work on Windows?
 
-Yes, with three annoyances: `PATH` after a `winget` install, 260-character paths in deep
+CI runs the full suite, the demo gate and a workspace-locking check on
+`windows-latest` on every push, so "yes" is a tested claim rather than a hope. There are
+three known annoyances: `PATH` after a `winget` install, 260-character paths in deep
 work directories, and console encoding for Indic scripts. All three are in
 [docs/platforms.md](docs/platforms.md).
 

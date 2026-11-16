@@ -2,6 +2,70 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.1.2] — 2026-11-18
+
+Second audit: concurrency, configuration and release hardening. No public API, CLI
+command or MCP tool name changed.
+
+### Fixed — concurrency
+
+* **The MCP transcription path released its workspace lock before saving (high).**
+  `transcribe_video` held the lock only until the provider returned, so a second request
+  could claim the same directory and overwrite the first one's transcript — silently, and
+  with a valid-looking file at the end. The lock is now held through extraction,
+  transcription, the save and the payload build, and released by a context manager on
+  any exception, including a failed save. The write path moved to
+  `server.run_transcription()` so it can be driven from several threads in tests.
+* **Transcript saves were not atomic (medium).** `Transcript.save()` wrote in place; a
+  crash could leave a half-written file that the next run would refuse. It now goes
+  through the same temp-file + `os.replace` path as every other write.
+
+### Fixed — configuration
+
+* **A malformed boolean was silently `False` (high).** `"flase"`, `"maybe"` and `"2"`
+  all parsed as `False`, quietly switching off caching, background preservation or
+  ducking. Only `1/true/yes/on` and `0/false/no/off` are accepted now, case-insensitively;
+  anything else is a warning and the default is kept.
+* **Configuration files could fail obscurely (medium).** `Settings.load()` used to raise
+  a raw `JSONDecodeError`, accept a non-object root, ignore unknown keys (a typo like
+  `targt_lang` meant the wrong language, silently), accept `NaN`/`Infinity`, and let a
+  wrong type surface as a `TypeError` three frames deeper. Every case is now a
+  `ConfigError` naming the file, the key and what was expected, and the CLI prints it
+  instead of a traceback.
+
+### Fixed — cache locking
+
+* **The cache lock fell back to an unlocked write (high).** After a timeout, `_save_cached`
+  wrote anyway, which is exactly how two writers corrupt one file. It now raises
+  `CacheWriteError`; the pipeline treats the cache as optional, records a warning and
+  carries on with the transcript it already has. The lock gained stale-lock recovery
+  (dead pid on POSIX, age on Windows, where probing a pid is unsafe) and a 10 s wait.
+
+### Added
+
+* **Windows CI.** A `windows-latest` / Python 3.12 job runs lint, the full suite, the
+  concurrent workspace and MCP tests on their own, the offline demo gate, MCP startup and
+  tool registration, and a Windows-specific workspace check (locking, isolation, stale
+  lock reclaim, cleanup).
+* **`docs/assessment.md`** — the architecture, feature and gap inventory, dependency and
+  licence assessment, security risk assessment and the phased roadmap, written before the
+  next phase of work rather than after it.
+
+### Tests
+
+227 (was 143). New: two simultaneous transcriptions of one source, same-named files in
+different folders, provider failure, save failure, "the lock is held during the write",
+sequential reuse, every boolean field against every documented word, six invalid boolean
+values, twelve invalid configuration files, cache lock blocking, stale-lock recovery,
+dead-pid recovery, an unwritable cache directory, and a cache failure that must not fail
+the dub.
+
+### Known limitations
+
+* No job lifecycle, progress or cancellation yet — see `docs/assessment.md` §4.1.
+* Network adapters remain `verified: false`.
+* No limits on input size or duration.
+
 ## [0.1.1] — 2026-11-17
 
 Production audit release. No public API, CLI command or MCP tool name changed; the

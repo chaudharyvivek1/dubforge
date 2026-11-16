@@ -1,6 +1,8 @@
 # Roadmap
 
-Written as intentions, not promises. Ordered by what most improves a real dub, not by
+Written as intentions, not promises. The detailed version — feature and gap inventory,
+dependency and licence assessment, security risk assessment, and the phased plan with
+sizes — is in [docs/assessment.md](docs/assessment.md). Ordered by what most improves a real dub, not by
 what is most fun to build.
 
 ## Now — the honest state of 0.1.0

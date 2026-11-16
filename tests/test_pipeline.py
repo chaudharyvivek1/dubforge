@@ -367,3 +367,30 @@ def test_a_provider_that_returns_no_audio_fails_the_line(demo_clip, tmp_path):
         pipeline_module.registry = original
     assert "no line could be synthesised" in str(exc.value)
     assert "empty audio file" in str(exc.value) or "nothing to place" in str(exc.value)
+
+
+@needs_ffmpeg
+def test_a_cache_failure_does_not_fail_the_dub(demo_clip, tmp_path, monkeypatch):
+    """Losing the cache costs a future transcription, never this one."""
+    import dubforge.pipeline as pipeline_module
+
+    def broken_cache(*args, **kwargs):
+        raise pipeline_module.CacheWriteError("another process holds the lock")
+
+    monkeypatch.setattr(pipeline_module, "_save_cached", broken_cache)
+    settings = Settings(
+        source_lang="en",
+        target_lang="hi",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="none",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "work"),
+        cache=True,
+    )
+    result = pipeline.dub(demo_clip, settings, output=tmp_path / "cached.mp4")
+    assert Path(result.output).exists()
+    assert any("cache not written" in warning for warning in result.warnings)
+    checks = {c["check"]: c for c in result.qc["checks"]}
+    assert checks["every_line_has_audio"]["ok"] is True

@@ -233,7 +233,12 @@ def _pick_voices(settings: Settings, tts, speakers: list[str]) -> dict[str, str]
     return mapping
 
 
-CACHE_LOCK_TIMEOUT_S = 30.0
+CACHE_LOCK_TIMEOUT_S = 10.0
+CACHE_LOCK_STALE_S = 120.0
+
+
+class CacheWriteError(RuntimeError):
+    """The transcript cache could not be written safely. Never fatal: the cache is optional."""
 
 
 def _cache_file(cache_dir: Path) -> Path:
@@ -243,9 +248,8 @@ def _cache_file(cache_dir: Path) -> Path:
 def _load_cached(cache_dir: Path, fingerprint: str) -> Transcript | None:
     """Read a cache entry, treating anything unexpected as "no entry".
 
-    A corrupt or stale file must never crash a run: it costs one transcription, not
-    the job. The fingerprint is checked again here because the directory name is only
-    a hint — two keys can collide in theory, and a hand-edited file cannot.
+    Reads need no lock: every write is atomic (temp file + `os.replace`), so a reader
+    sees either the previous document or the new one, never a half-written file.
     """
     path = _cache_file(cache_dir)
     if not path.exists():
@@ -265,40 +269,83 @@ def _load_cached(cache_dir: Path, fingerprint: str) -> Transcript | None:
         return None
 
 
-def _save_cached(cache_dir: Path, fingerprint: str, transcript: Transcript) -> str:
-    """Write the cache atomically, serialised against other processes.
+def _cache_lock_is_stale(lock: Path) -> bool:
+    """A lock is stale when its holder is gone, or when it is implausibly old.
 
-    The lock stops two jobs transcribing the same file from interleaving writes; the
-    atomic replace stops a reader ever seeing half a JSON document, which is what
-    turns a crashed run into a permanently broken cache.
+    Windows has no safe pid probe (`os.kill` signals there), so on that platform age
+    is the only test — which is why the age threshold is generous.
     """
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    body = json.dumps(
-        {"fingerprint": fingerprint, "transcript": transcript.to_dict()},
-        ensure_ascii=False,
-        indent=2,
-    )
-    lock = cache_dir / ".lock"
-    deadline = time.time() + CACHE_LOCK_TIMEOUT_S
-    acquired = False
+    try:
+        age = time.time() - lock.stat().st_mtime
+    except OSError:
+        return True
+    if age > CACHE_LOCK_STALE_S:
+        return True
+    try:
+        info = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False  # just created, body not written yet
+    pid = info.get("pid") if isinstance(info, dict) else None
+    if os.name == "nt" or not isinstance(pid, int) or pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except (PermissionError, OSError):
+        return False
+    return False
+
+
+def _acquire_cache_lock(lock: Path, timeout: float) -> bool:
+    """Exclusive create, with stale-lock recovery. Returns False on timeout."""
+    deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
+            if _cache_lock_is_stale(lock):
+                lock.unlink(missing_ok=True)
+                continue
             time.sleep(0.05)
             continue
-        except OSError:
-            break  # read-only or odd filesystem: fall through to an unlocked write
-        os.close(fd)
-        acquired = True
-        break
+        except OSError as exc:
+            raise CacheWriteError(f"cannot create a cache lock at {lock}: {exc}") from exc
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"pid": os.getpid(), "at": time.time()}))
+        return True
+    return False
+
+
+def _save_cached(
+    cache_dir: Path,
+    fingerprint: str,
+    transcript: Transcript,
+    timeout: float = CACHE_LOCK_TIMEOUT_S,
+) -> str:
+    """Write the cache atomically, under a lock, or not at all.
+
+    If the lock cannot be taken, this raises instead of writing unlocked: two writers
+    racing on one file is a corrupt cache, and a corrupt cache is a wrong dub later.
+    The caller treats the cache as optional and carries on with a warning — the
+    transcript is already in memory and in the job directory, so nothing is lost.
+    """
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    lock = cache_dir / ".lock"
+    if not _acquire_cache_lock(lock, timeout):
+        raise CacheWriteError(
+            f"another process has held the cache lock at {lock} for more than {timeout:.0f}s"
+        )
     try:
-        atomic_write_text(_cache_file(cache_dir), body)
+        body = json.dumps(
+            {"fingerprint": fingerprint, "transcript": transcript.to_dict()},
+            ensure_ascii=False,
+            indent=2,
+        )
+        return str(atomic_write_text(_cache_file(cache_dir), body))
     finally:
-        if acquired:
-            lock.unlink(missing_ok=True)
-    return str(_cache_file(cache_dir))
+        lock.unlink(missing_ok=True)
 
 
 def _write_report(
@@ -470,7 +517,12 @@ def dub(
             )
         )
         if settings.cache:
-            _save_cached(job.cache_dir, fingerprint, transcript)
+            try:
+                _save_cached(job.cache_dir, fingerprint, transcript)
+            except (CacheWriteError, OSError) as exc:
+                # Losing the cache costs a future transcription, not this dub.
+                result.warnings.append(f"transcript cache not written: {exc}")
+                say(f"· cache skipped: {exc}")
         job.mark("transcribe", True, f"{len(transcript.segments)} lines")
 
     if not transcript.segments:

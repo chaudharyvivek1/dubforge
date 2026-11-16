@@ -112,11 +112,12 @@ class Transcript:
         )
 
     def save(self, path: str | Path) -> str:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(
-            json.dumps(self.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        """Write atomically: a crash mid-save must not leave a half-written transcript."""
+        from .workspace import atomic_write_text
+
+        return str(
+            atomic_write_text(path, json.dumps(self.to_dict(), ensure_ascii=False, indent=2))
         )
-        return str(path)
 
     @classmethod
     def load(cls, path: str | Path) -> Transcript:

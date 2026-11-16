@@ -11,7 +11,7 @@ import json
 import sys
 
 from . import __version__, demo, doctor, ffmpeg, pipeline, qc, srt
-from .config import Settings
+from .config import ConfigError, Settings
 from .media import Transcript
 from .providers import registry
 from .providers.base import ProviderError, ProviderUnavailable
@@ -330,6 +330,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
+    except ConfigError as exc:
+        print(f"dubforge: configuration error\n{exc}", file=sys.stderr)
+        return EXIT_ERROR
     except ProviderUnavailable as exc:
         print(f"dubforge: {exc}", file=sys.stderr)
         return EXIT_ERROR

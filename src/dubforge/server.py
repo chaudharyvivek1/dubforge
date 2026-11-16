@@ -241,6 +241,46 @@ def _settings(**kwargs) -> Settings:
     return Settings.from_env(**clean)
 
 
+def run_transcription(
+    candidate: Path,
+    source: str,
+    provider,
+    diarize: bool,
+    workdir: str | Path,
+) -> dict:
+    """Extract, transcribe and save inside one locked job directory.
+
+    Kept at module level (rather than inline in the tool) so the concurrency tests can
+    drive it from several threads. The lock is held for the whole body: extraction,
+    transcription, the save, and the payload build. Releasing it before the save is
+    exactly the race this function exists to prevent.
+    """
+    job = open_job(workdir, candidate, cache_key=f"asr-{provider.name}")
+    with job:
+        audio = ffmpeg.extract_audio(candidate, job.dir("asr") / "input.wav", 16000, 1)
+        transcript = provider.transcribe(audio, source, diarize=diarize)
+        if not transcript.segments:
+            raise ToolError(
+                "unsupported_media",
+                "no speech was found in the audio",
+                "Check the file with probe_media; for a music-only file there is nothing to dub.",
+            )
+        out = transcript.save(job.file("transcript.json"))
+        return {
+            "provider": provider.name,
+            "language": transcript.language,
+            "segments": len(transcript.segments),
+            "speakers": transcript.speakers,
+            "transcript_path": out,
+            "job": job.path.name,
+            "preview": [
+                {"start": seg.start, "end": seg.end, "speaker": seg.speaker, "text": seg.text[:120]}
+                for seg in transcript.segments[:5]
+            ],
+            "note": "full transcript is in the file; do not paste it into the conversation",
+        }
+
+
 def build_server():
     try:
         from fastmcp import FastMCP
@@ -374,30 +414,11 @@ def build_server():
         source = _lang(language or "auto", "language", allow_auto=True)
         settings = _settings(source_lang=source, asr=_known("asr", asr, "asr") or None)
         provider = registry.resolve("asr", settings)
-        job = open_job(settings.workdir, candidate, cache_key=f"asr-{provider.name}")
-        try:
-            audio = ffmpeg.extract_audio(candidate, job.dir("asr") / "input.wav", 16000, 1)
-            transcript = provider.transcribe(audio, source, diarize=bool(diarize))
-        finally:
-            job.release()
-        if not transcript.segments:
-            raise ToolError(
-                "unsupported_media",
-                "no speech was found in the audio",
-                "Check the file with probe_media; for a music-only file there is nothing to dub.",
-            )
-        out = transcript.save(job.path / "transcript.json")
+        # The lock must be held until the transcript is *on disk*, not just until the
+        # provider returns: releasing it before the save let a second request claim the
+        # same directory and overwrite this one's transcript.
         return _ok(
-            provider=provider.name,
-            language=transcript.language,
-            segments=len(transcript.segments),
-            speakers=transcript.speakers,
-            transcript_path=out,
-            preview=[
-                {"start": s.start, "end": s.end, "speaker": s.speaker, "text": s.text[:120]}
-                for s in transcript.segments[:5]
-            ],
-            note="full transcript is in the file; do not paste it into the conversation",
+            **run_transcription(candidate, source, provider, bool(diarize), settings.workdir)
         )
 
     # --------------------------------------------------------------------- dub

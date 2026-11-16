@@ -43,7 +43,9 @@ shortcut.
 
 ## Windows
 
-Works, with three specific annoyances:
+Tested in CI on `windows-latest` (Python 3.12) on every push: lint, the full suite, the
+concurrent workspace and MCP tests, the offline demo gate and a Windows-specific
+workspace check. Three specific annoyances remain:
 
 * **PATH.** `winget install Gyan.FFmpeg` does not always add itself to `PATH` for an
   already-open terminal. Reopen it, or `set DUBFORGE_FFMPEG=C:\ffmpeg\bin\ffmpeg.exe`.

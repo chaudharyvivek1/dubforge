@@ -3,6 +3,9 @@
 import json
 import os
 import threading
+import time
+
+import pytest
 
 from dubforge.media import Segment, Transcript, content_hash, file_fingerprint
 from dubforge.pipeline import _load_cached, _save_cached
@@ -131,3 +134,62 @@ def test_concurrent_writers_never_corrupt_the_cache(tmp_path):
     assert payload["fingerprint"].startswith("key-")
     assert _load_cached(cache, payload["fingerprint"]) is not None
     assert not (cache / ".lock").exists(), "the cache lock must be released"
+
+
+# --------------------------------------------------------------- cache locking
+
+
+def test_a_live_lock_blocks_the_write_instead_of_writing_unlocked(tmp_path):
+    """Silently writing without the lock is how two writers corrupt one cache file."""
+    from dubforge.pipeline import CacheWriteError, _save_cached
+
+    cache = tmp_path / "cache"
+    cache.mkdir(parents=True)
+    (cache / ".lock").write_text(
+        json.dumps({"pid": os.getpid(), "at": time.time()}), encoding="utf-8"
+    )
+
+    with pytest.raises(CacheWriteError) as exc:
+        _save_cached(cache, "key", _transcript(), timeout=0.3)
+    assert "cache lock" in str(exc.value)
+    assert not (cache / "transcript.json").exists(), "nothing may be written while the lock is held"
+
+
+def test_a_stale_lock_is_recovered(tmp_path):
+    from dubforge.pipeline import _save_cached
+
+    cache = tmp_path / "cache"
+    cache.mkdir(parents=True)
+    lock = cache / ".lock"
+    lock.write_text(json.dumps({"pid": 999_999_999, "at": time.time()}), encoding="utf-8")
+    if os.name == "nt":  # liveness is judged by age there
+        old = time.time() - 600
+        os.utime(lock, (old, old))
+
+    _save_cached(cache, "key", _transcript("recovered"), timeout=2.0)
+    assert _load_cached(cache, "key").segments[0].text == "recovered"
+    assert not lock.exists()
+
+
+def test_a_dead_process_lock_is_recovered_on_posix(tmp_path):
+    if os.name == "nt":
+        pytest.skip("Windows has no safe pid probe; age-based recovery is tested above")
+    from dubforge.pipeline import _save_cached
+
+    cache = tmp_path / "cache"
+    cache.mkdir(parents=True)
+    (cache / ".lock").write_text(
+        json.dumps({"pid": 999_999_999, "at": time.time()}), encoding="utf-8"
+    )
+    _save_cached(cache, "key", _transcript(), timeout=2.0)
+    assert _load_cached(cache, "key") is not None
+
+
+def test_an_unwritable_cache_directory_raises_a_clear_error(tmp_path):
+    from dubforge.pipeline import CacheWriteError, _save_cached
+
+    blocker = tmp_path / "cache"
+    blocker.write_text("I am a file, not a directory", encoding="utf-8")
+    with pytest.raises((CacheWriteError, OSError)) as exc:
+        _save_cached(blocker, "key", _transcript(), timeout=0.2)
+    assert "cache" in str(exc.value).lower()

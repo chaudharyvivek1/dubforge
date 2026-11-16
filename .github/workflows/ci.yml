@@ -98,6 +98,121 @@ jobs:
             ci-demo/work/**/manifest.json
           retention-days: 7
 
+  windows:
+    # Windows is where paths, locks and console encodings break first, so it gets a
+    # real job rather than a claim in the README. 3.12 only: the oldest supported
+    # interpreter is covered on Linux.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg
+        # A system ffmpeg is preferred; if the package manager is unavailable the
+        # bundled imageio-ffmpeg binary is used instead, and `doctor` reports which.
+        run: choco install ffmpeg -y --no-progress || echo "choco unavailable; the bundled binary will be used"
+
+      - name: Install dubforge
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,mcp]"
+
+      - name: Show the ffmpeg that will actually be used
+        run: python -m dubforge doctor
+
+      - name: Lint
+        run: |
+          ruff check src tests scripts
+          ruff format --check src tests scripts
+
+      - name: Tests
+        run: python -m pytest -q --durations=10
+
+      - name: Concurrent workspace and MCP tests (run on their own)
+        run: python -m pytest -q tests/test_concurrency.py tests/test_workspace.py tests/test_server.py
+
+      - name: Offline demo gate (expected QC failure, verified output)
+        run: python scripts/ci_demo_check.py --out-dir ci-demo
+
+      - name: MCP startup, tool registration and structured errors
+        run: |
+          python - <<'PY'
+          import asyncio, json
+          from fastmcp import Client
+          from dubforge.server import build_server
+
+          EXPECTED = {"dubforge_doctor", "list_providers", "probe_media", "plan_dub",
+                      "transcribe_video", "dub_video", "get_qc", "list_voices",
+                      "write_subtitles", "dubforge_version"}
+
+          async def main():
+              async with Client(build_server()) as client:
+                  names = {tool.name for tool in await client.list_tools()}
+                  assert names == EXPECTED, names ^ EXPECTED
+                  bad = await client.call_tool("plan_dub", {"path": "C:/nope.mp4", "target_lang": "hi"})
+                  payload = json.loads(bad.content[0].text)
+                  assert payload["ok"] is False and payload["error"]["code"] == "missing_file", payload
+                  print("mcp ok:", len(names), "tools")
+
+          asyncio.run(main())
+          PY
+
+      - name: Workspace locking, isolation and cleanup on Windows
+        run: |
+          python - <<'PY'
+          import json, time, threading
+          from pathlib import Path
+          from tempfile import mkdtemp
+          from dubforge.workspace import open_job
+
+          root = Path(mkdtemp())
+          source = root / "lesson.mp4"
+          source.write_bytes(b"x")
+
+          a = open_job(root / "work", source, fingerprint="f")
+          b = open_job(root / "work", source, fingerprint="f")   # concurrent: must get its own dir
+          assert a.path != b.path, (a.path, b.path)
+
+          (a.path / "tts").mkdir()
+          (a.path / "tts" / "0.wav").write_bytes(b"x")
+          removed = a.cleanup()
+          assert "tts" in removed and not (a.path / "tts").exists()
+          assert (b.path / ".lock").exists(), "the second job lost its lock"
+
+          a.release()
+          b.release()
+          assert not (a.path / ".lock").exists()
+
+          # a stale lock from a killed process must be reclaimed on Windows too
+          c = open_job(root / "work", source, fingerprint="f")
+          c.release()
+          (c.path / ".lock").write_text("", encoding="utf-8")
+          old = time.time() - 90000
+          import os
+          os.utime(c.path / ".lock", (old, old))
+          d = open_job(root / "work", source, fingerprint="f")
+          assert d.path == c.path, "stale lock was not reclaimed"
+          d.release()
+          print("workspace ok on", os.name)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-windows
+          path: |
+            ci-demo/*.mp4
+            ci-demo/*.json
+            ci-demo/work/**/qc.json
+          retention-days: 7
+
   build:
     runs-on: ubuntu-latest
     steps:
