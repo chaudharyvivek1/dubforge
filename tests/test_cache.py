@@ -193,3 +193,51 @@ def test_an_unwritable_cache_directory_raises_a_clear_error(tmp_path):
     with pytest.raises((CacheWriteError, OSError)) as exc:
         _save_cached(blocker, "key", _transcript(), timeout=0.2)
     assert "cache" in str(exc.value).lower()
+
+
+def test_a_thread_holding_the_cache_lock_blocks_other_threads_without_hanging(tmp_path):
+    """Two threads in one process share a pid, so the file lock cannot tell them apart."""
+
+    from dubforge.pipeline import CacheWriteError, _save_cached, _thread_lock_for
+
+    cache = tmp_path / "cache"
+    cache.mkdir(parents=True)
+    held = _thread_lock_for(cache)
+    held.acquire()
+    try:
+        with pytest.raises(CacheWriteError) as exc:
+            _save_cached(cache, "key", _transcript(), timeout=0.3)
+        assert "thread" in str(exc.value)
+        assert not (cache / "transcript.json").exists()
+    finally:
+        held.release()
+
+    # once released, the same call succeeds
+    _save_cached(cache, "key", _transcript(), timeout=2.0)
+    assert _load_cached(cache, "key") is not None
+
+
+def test_concurrent_threads_serialise_instead_of_failing(tmp_path):
+    import threading
+
+    from dubforge.pipeline import _save_cached
+
+    cache = tmp_path / "cache"
+    results: list[str] = []
+    errors: list[Exception] = []
+
+    def writer(n: int) -> None:
+        try:
+            results.append(_save_cached(cache, f"k{n}", _transcript(f"thread {n}"), timeout=5.0))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors, errors
+    assert len(results) == 6
+    assert not (cache / ".lock").exists()

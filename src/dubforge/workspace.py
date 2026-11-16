@@ -29,7 +29,6 @@ a transcription only when their bytes really match.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import os
@@ -40,7 +39,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-STALE_AFTER_S = 24 * 3600  # a lock older than this is from a dead run, not a live one
+STALE_AFTER_S = 24 * 3600
+UNLINK_ATTEMPTS = 6
+UNLINK_DELAY_S = 0.03  # a lock older than this is from a dead run, not a live one
 MAX_JOB_SUFFIXES = 32
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -178,8 +179,7 @@ class JobWorkspace:
     # ------------------------------------------------------------------- lock
     def release(self) -> None:
         if self._lock is not None:
-            with contextlib.suppress(OSError):
-                self._lock.unlink()
+            unlink_retry(self._lock)
             self._lock = None
 
     def __enter__(self) -> JobWorkspace:
@@ -187,6 +187,25 @@ class JobWorkspace:
 
     def __exit__(self, *exc_info) -> None:
         self.release()
+
+
+def unlink_retry(path: str | Path, attempts: int = UNLINK_ATTEMPTS) -> bool:
+    """Delete a file, retrying briefly.
+
+    Windows refuses to delete a file another process has open, and a lock file is
+    exactly the kind of file that is open for a microsecond at a time. A single
+    unlink therefore fails at random; a short retry does not.
+    """
+    target = Path(path)
+    for attempt in range(attempts):
+        try:
+            target.unlink(missing_ok=True)
+            return True
+        except OSError:
+            if attempt == attempts - 1:
+                return False
+            time.sleep(UNLINK_DELAY_S)
+    return False
 
 
 def atomic_write_text(path: str | Path, text: str) -> Path:
@@ -199,7 +218,17 @@ def atomic_write_text(path: str | Path, text: str) -> Path:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp, target)
+        # `os.replace` is atomic everywhere, but on Windows it fails with
+        # PermissionError while a reader has the destination open — the same retry
+        # that saves `unlink` saves this.
+        for attempt in range(UNLINK_ATTEMPTS):
+            try:
+                os.replace(temp, target)
+                break
+            except OSError:
+                if attempt == UNLINK_ATTEMPTS - 1:
+                    raise
+                time.sleep(UNLINK_DELAY_S)
     finally:
         temp.unlink(missing_ok=True)
     return target
@@ -274,7 +303,7 @@ def open_job(
             _prepare(workspace)
             return workspace
         if _lock_is_stale(lock):
-            lock.unlink(missing_ok=True)
+            unlink_retry(lock)
             acquired, lock = _try_lock(candidate)
             if acquired:
                 workspace = JobWorkspace(

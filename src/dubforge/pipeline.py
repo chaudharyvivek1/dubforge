@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,7 +28,7 @@ from .config import Settings
 from .media import Segment, Transcript, file_fingerprint
 from .providers import registry
 from .providers.base import ProviderError, ProviderUnavailable
-from .workspace import WorkspaceError, atomic_write_text, open_job
+from .workspace import WorkspaceError, atomic_write_text, open_job, unlink_retry
 
 
 class DubError(RuntimeError):
@@ -241,6 +242,20 @@ class CacheWriteError(RuntimeError):
     """The transcript cache could not be written safely. Never fatal: the cache is optional."""
 
 
+# The file lock stops two *processes* racing. It cannot stop two *threads* in one
+# process, because they share a pid — and on Windows they then also fight over the
+# handle (`PermissionError` on unlink). One lock per cache directory, held by the
+# thread that is writing, keeps the file lock doing the job it is actually good at.
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _thread_lock_for(cache_dir: Path) -> threading.Lock:
+    key = str(Path(cache_dir).resolve())
+    with _THREAD_LOCKS_GUARD:
+        return _THREAD_LOCKS.setdefault(key, threading.Lock())
+
+
 def _cache_file(cache_dir: Path) -> Path:
     return Path(cache_dir) / "transcript.json"
 
@@ -333,19 +348,27 @@ def _save_cached(
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     lock = cache_dir / ".lock"
-    if not _acquire_cache_lock(lock, timeout):
+    thread_lock = _thread_lock_for(cache_dir)
+    if not thread_lock.acquire(timeout=timeout):
         raise CacheWriteError(
-            f"another process has held the cache lock at {lock} for more than {timeout:.0f}s"
+            f"another thread has been writing this cache for more than {timeout:.0f}s"
         )
     try:
-        body = json.dumps(
-            {"fingerprint": fingerprint, "transcript": transcript.to_dict()},
-            ensure_ascii=False,
-            indent=2,
-        )
-        return str(atomic_write_text(_cache_file(cache_dir), body))
+        if not _acquire_cache_lock(lock, timeout):
+            raise CacheWriteError(
+                f"another process has held the cache lock at {lock} for more than {timeout:.0f}s"
+            )
+        try:
+            body = json.dumps(
+                {"fingerprint": fingerprint, "transcript": transcript.to_dict()},
+                ensure_ascii=False,
+                indent=2,
+            )
+            return str(atomic_write_text(_cache_file(cache_dir), body))
+        finally:
+            unlink_retry(lock)
     finally:
-        lock.unlink(missing_ok=True)
+        thread_lock.release()
 
 
 def _write_report(

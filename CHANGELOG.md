@@ -51,14 +51,26 @@ command or MCP tool name changed.
   licence assessment, security risk assessment and the phased roadmap, written before the
   next phase of work rather than after it.
 
+### Fixed — Windows (found by the new Windows job)
+
+* **Concurrent cache writes failed on Windows (high).** The file lock cannot separate two
+  *threads* in one process — they share a pid, so a lock held by a sibling thread looked
+  live forever and every other writer waited out its timeout. On Windows the release also
+  failed with `PermissionError` when another thread had the lock file open. There is now
+  an in-process lock per cache directory around the file lock, and deletion/replace go
+  through a short retry (`unlink_retry`, and `os.replace` retried inside
+  `atomic_write_text`), which is what Windows requires when a file is momentarily open.
+  The first Windows run failed on exactly this; it is fixed and re-run, not skipped.
+
 ### Tests
 
-227 (was 143). New: two simultaneous transcriptions of one source, same-named files in
+229 (was 143). New: two simultaneous transcriptions of one source, same-named files in
 different folders, provider failure, save failure, "the lock is held during the write",
 sequential reuse, every boolean field against every documented word, six invalid boolean
 values, twelve invalid configuration files, cache lock blocking, stale-lock recovery,
 dead-pid recovery, an unwritable cache directory, and a cache failure that must not fail
-the dub.
+the dub, a thread holding the cache lock blocking siblings without hanging, and six
+threads serialising their writes.
 
 ### Known limitations
 
