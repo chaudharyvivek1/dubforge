@@ -5,19 +5,26 @@ dependency and licence assessment, security risk assessment, and the phased plan
 sizes — is in [docs/assessment.md](docs/assessment.md). Ordered by what most improves a real dub, not by
 what is most fun to build.
 
-## Now — the honest state of 0.2.1
+## Now — the honest state of 0.4.0
 
 * The pipeline is complete and the offline path is fully tested (the suite is the source of
   truth for its own size — `python -m pytest --collect-only -q | tail -1` — real ffmpeg, a
   real mp4 at the end of `dubforge demo`).
 * Jobs are request-addressed, single-owner, heartbeat-monitored and recoverable; retries
-  cannot silently bill twice; batch outputs cannot collide; QC has twenty measurable checks
-  (twenty-one for a multi-track source — see `docs/quality.md`).
+  cannot silently bill twice; batch outputs cannot collide; QC has twenty-three measurable
+  checks (twenty-four for a multi-track source — see `docs/quality.md`).
 * Jobs, background execution, cooperative cancellation, capabilities, limits, batch
   processing, provider health and opt-in fallback all shipped in 0.2.0.
 * 24 adapters exist; the network ones are written against vendor documentation and are
   marked `verified: false` until exercised against live APIs. `health(live=True)` proves a
   credential works; it does not prove the output is good.
+
+* **0.3.0** made the timing model correct (no window may exceed the room before the next
+  line), made alignment honest (measured or absent, never invented), and added
+  segment-level regeneration with `review.json`.
+* **0.4.0** made identity content-based, moved the segment lock *before* synthesis, cached
+  the separated bed, added the review export/validate/apply loop and a static review page,
+  and made publishing an output an explicit, validated, atomic step.
 
 ## Next
 

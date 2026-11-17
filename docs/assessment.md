@@ -1,10 +1,11 @@
 # Assessment: architecture, features and roadmap
 
 Written before the next phase of work, as the project's own rules require: inspect,
-report, then implement in separate reviewed changes. **Nothing in the "missing" tables
-below is implemented yet.** Where a feature is partial, it says exactly how far it goes.
+report, then implement in separate reviewed changes. **Every row below states the release it
+shipped in, or that it is still missing.** Where a feature is partial, it says exactly how
+far it goes.
 
-Current release: **0.3.0**. Everything in "implemented" is tested; everything else is
+Current release: **0.4.0**. Everything in "implemented" is tested; everything else is
 not, and is not advertised anywhere.
 
 ---
@@ -87,7 +88,7 @@ next phase closes (see §5).
 | Providers | retry safety for non-idempotent calls | **done (0.2.1)** | `ambiguous` instead of a silent second charge |
 | Jobs | progress reporting, cancellation, retry of a failed stage | **done (0.2.0)** | cancellation is cooperative; stated, not implied |
 | MCP | `dubforge_get_capabilities`, `validate_config`, job tools, `cleanup_jobs`, `check_provider_health` | **done (0.2.0)** | 11 new tools; `analyze_video` deliberately skipped (duplicate of `probe_media` + `plan_dub`) |
-| MCP | `translate_transcript`, `generate_speech` as separate stage tools | **missing** | only the pipeline and transcription are exposed; a stage tool needs segment-level caching first |
+| MCP | `translate_transcript`, `generate_speech` as separate stage tools | **missing** | the pipeline, regeneration and the review loop are exposed; a stage tool would need a segment-level contract for the caller |
 | Providers | fallback chain when a provider fails mid-run | **done (0.2.0)** | opt-in, announced, recorded in `providers_used` |
 | Providers | health check beyond "is the key set" | **done (0.2.0)** | cheap authenticated probe for 7 adapters, honest "no probe" for the rest |
 | Providers | a repeatable live-verification process | **done (0.2.1)** | `scripts/verify_providers.py` + `docs/verification.json`; nothing verified live yet |
@@ -95,8 +96,11 @@ next phase closes (see §5).
 | Limits | input size, duration, runtime, cost, concurrency, retries, retention | **done (0.2.0)** | `limits.py`, checked before spending and between stages |
 | Batch | folder processing, failure isolation, resume, aggregate estimate | **done (0.2.0)** | `batch.py` + `dubforge batch` |
 | Audio | multi-track export (dialogue / music / effects in one container) | **missing** | the mix is single-track |
-| Audio | silence trimming, pitch control, per-segment regeneration | **missing** | atempo only, pitch preserved by design |
-| Subtitles | line-length limits, reading-speed (CPS) validation, translation memory | **missing** | subtitle text is whatever the translation is |
+| Audio | per-segment regeneration | **done (0.3.0)** | `segments.py` + `dubforge regen`; reuse is per line, the mix is rebuilt |
+| Audio | partial remixing (reuse the mixed track, re-place only changed lines) | **missing** | every run rebuilds the dialogue track, ducking and mux; `review.json` says so |
+| Audio | silence trimming, pitch control | **missing** | atempo only, pitch preserved by design |
+| Subtitles | line-length limits, reading-speed (CPS) validation | **done (0.2.1)** | `subtitle_readability` warns on both; the text is still whatever the translation is |
+| Subtitles | translation memory | **missing** | the glossary is the closest thing today |
 | Input | URL ingestion | **missing** | deliberate: it needs SSRF protection first (§7) |
 | Limits | maximum input size, maximum duration, per-run budget | **done (0.2.0)** | refused with the setting to change |
 | Output | MKV/MOV containers, FLAC/WAV/MP3 audio, configurable bitrate beyond `--audio-bitrate` | **partial** | mp4/m4a only, audio bitrate configurable |

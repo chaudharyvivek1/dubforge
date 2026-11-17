@@ -12,7 +12,20 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, batch, capabilities, demo, doctor, ffmpeg, limits, pipeline, qc, srt
+from . import (
+    __version__,
+    batch,
+    capabilities,
+    demo,
+    doctor,
+    ffmpeg,
+    limits,
+    pipeline,
+    qc,
+    review,
+    srt,
+    stems,
+)
 from .config import ConfigError, Settings
 from .jobs import JobError, JobStore
 from .media import Transcript
@@ -86,6 +99,8 @@ def _settings(args) -> Settings:
         overrides["cache"] = False
     if getattr(args, "dry_run", False):
         overrides["dry_run"] = True
+    if getattr(args, "overwrite", False):
+        overrides["overwrite_output"] = True
     if getattr(args, "voice_pool", None):
         overrides["voice_pool"] = [v.strip() for v in args.voice_pool.split(",") if v.strip()]
     if getattr(args, "voice_map", None):
@@ -410,6 +425,106 @@ def cmd_batch(args) -> int:
     return EXIT_OK if result.ok else EXIT_QC_FAILED
 
 
+def cmd_review(args) -> int:
+    """export / validate / apply a review file."""
+    settings = _settings(args)
+    try:
+        if args.action == "export":
+            payload = review.export(args.path_or_id, settings)
+            if args.out:
+                Path(args.out).write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                if not args.json:
+                    print(f"wrote {args.out} ({len(payload['segments'])} line(s))")
+                    print("edit `edited_target_text`, then: dubforge review apply " + str(args.out))
+            elif args.json:
+                _emit_json(payload)
+            else:
+                print(
+                    f"job {payload['job_id']}: {len(payload['segments'])} line(s); "
+                    "pass --out to write a file"
+                )
+            return EXIT_OK
+
+        if args.action == "validate":
+            verdict = review.validate(args.path_or_id, settings)
+            if args.json:
+                _emit_json(verdict)
+            elif verdict["ok"]:
+                print(
+                    f"review file is valid: {verdict['edits']} edit(s) over "
+                    f"{verdict['segments']} line(s)"
+                )
+            else:
+                print("review file has problems:")
+                for problem in verdict["problems"]:
+                    print(f"  - {problem}")
+            return EXIT_OK if verdict["ok"] else EXIT_ERROR
+
+        if args.action == "apply":
+            outcome = review.apply(args.path_or_id, settings, output=args.out or None)
+            if args.json:
+                _emit_json(outcome)
+            else:
+                if outcome.get("output"):
+                    print(f"applied {outcome['applied']} edit(s) → {outcome['output']}")
+                    print(
+                        f"{outcome['rendered_segments']} line(s) rendered, "
+                        f"{outcome['reused_segments']} reused, "
+                        f"{outcome['stems_reused']} bed(s) reused"
+                    )
+                else:
+                    print(outcome.get("note", "nothing applied"))
+            return EXIT_OK if outcome.get("qc_ok", True) else EXIT_QC_FAILED
+    except (review.ReviewError, pipeline.DubError, ProviderError, ProviderUnavailable) as exc:
+        print(f"dubforge: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"dubforge: unknown review action {args.action!r}", file=sys.stderr)
+    return EXIT_ERROR
+
+
+def cmd_cache(args) -> int:
+    """Inspect and clean the content caches (stems, and the segment stores' size)."""
+    settings = _settings(args)
+    cache = stems.StemCache(Path(settings.workdir) / "cache" / "stems")
+    if args.action == "info":
+        info = cache.stats()
+        payload = {
+            "stems": info,
+            "bytes": info["bytes"],
+            "limit": settings.stem_cache_max_bytes,
+            "workdir": str(settings.workdir),
+        }
+        if args.json:
+            _emit_json(payload)
+        else:
+            print(
+                f"stem cache: {info['entries']} entr(y/ies), {info['bytes'] / 1e6:.1f} MB "
+                f"of {settings.stem_cache_max_bytes / 1e9:.1f} GB"
+            )
+        return EXIT_OK
+    if args.action == "clean":
+        outcome = cache.cleanup(
+            older_than_days=args.older_than or None,
+            max_bytes=settings.stem_cache_max_bytes,
+            dry_run=not args.yes,
+        )
+        if args.json:
+            _emit_json(outcome)
+        else:
+            verb = "would remove" if outcome["dry_run"] else "removed"
+            print(
+                f"{verb} {len(outcome['removed'])} stem entr(y/ies); "
+                f"{outcome['bytes_after'] / 1e6:.1f} MB remain"
+            )
+            if outcome["dry_run"] and outcome["removed"]:
+                print("re-run with --yes to delete")
+        return EXIT_OK
+    print(f"dubforge: unknown cache action {args.action!r}", file=sys.stderr)
+    return EXIT_ERROR
+
+
 def cmd_regen(args) -> int:
     """Re-dub one job with edited lines, reusing every untouched render."""
     settings = _settings(args)
@@ -494,6 +609,11 @@ def build_parser() -> argparse.ArgumentParser:
     common(p)
     p.add_argument("input", help="video or audio file")
     p.add_argument("--out", help="output file (default: <name>.<lang>.mp4 next to the input)")
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace an existing output file (default: refuse, and say so)",
+    )
     _language_args(p)
     _quality_args(p)
     p.set_defaults(func=cmd_dub)
@@ -534,6 +654,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_jobs)
 
+    p = sub.add_parser("review", help="export, validate or apply a human review file")
+    common(p)
+    p.add_argument("action", choices=["export", "validate", "apply"])
+    p.add_argument("path_or_id", help="a job id (export) or a review file (validate/apply)")
+    p.add_argument("--out", help="where to write the review file, or the new dub")
+    p.set_defaults(func=cmd_review)
+
+    p = sub.add_parser("cache", help="inspect or clean the content caches")
+    common(p)
+    p.add_argument("action", choices=["info", "clean"])
+    p.add_argument(
+        "--older-than", type=int, default=0, help="clean: only entries older than N days"
+    )
+    p.add_argument(
+        "--yes", action="store_true", help="clean: actually delete (default is a dry run)"
+    )
+    p.set_defaults(func=cmd_cache)
+
     p = sub.add_parser("regen", help="re-dub one job with edited lines, reusing untouched renders")
     common(p)
     p.add_argument("job_id", help="the job to regenerate")
@@ -544,6 +682,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace a line's translation, by segment id or index (repeatable)",
     )
     p.add_argument("--out", help="output path (default: <previous>.r<N>.mp4, never the old file)")
+    p.add_argument(
+        "--overwrite", action="store_true", help="replace an existing output file (default: refuse)"
+    )
     p.set_defaults(func=cmd_regen)
 
     p = sub.add_parser("batch", help="dub a folder (or a list of files) through the same pipeline")

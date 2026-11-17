@@ -2,7 +2,7 @@
 
 # MCP tool reference
 
-All 22 tools, generated from the running server: names, descriptions and
+All 25 tools, generated from the running server: names, descriptions and
 input schemas are read from the code, so this page is the schema.
 
 ## Response envelope
@@ -23,11 +23,13 @@ an envelope, never an exception the transport has to render.
 | Tool | What it does |
 | --- | --- |
 | [`dub_video`](#dub_video) | Dub a video or audio file. Returns output paths, a QC verdict and any warnings. |
+| [`dubforge_apply_review`](#dubforge_apply_review) | Apply the edits in a validated review file, re-rendering only the changed lines. |
 | [`dubforge_cancel_job`](#dubforge_cancel_job) | Ask a job to stop. Cooperative: checked between stages and before each paid call. |
 | [`dubforge_check_provider_health`](#dubforge_check_provider_health) | Readiness for every adapter, and with live=true a cheap authenticated probe. |
 | [`dubforge_cleanup_jobs`](#dubforge_cleanup_jobs) | Delete finished job records (and their work directories). Dry run by default. |
 | [`dubforge_doctor`](#dubforge_doctor) | Report ffmpeg, optional packages, API keys (set/not set) and which provider each stage would use. |
 | [`dubforge_estimate_cost`](#dubforge_estimate_cost) | What a dub would cost at list prices, and whether your limits allow it. Spends nothing. |
+| [`dubforge_export_review`](#dubforge_export_review) | Export a review file for a finished job: one editable row per line. |
 | [`dubforge_get_capabilities`](#dubforge_get_capabilities) | What this install can actually do: stages, providers, features, formats, limits. |
 | [`dubforge_get_job_result`](#dubforge_get_job_result) | Output paths, QC verdict and the providers that actually ran, once a job finished. |
 | [`dubforge_get_job_status`](#dubforge_get_job_status) | Current state of a job: status, stage, progress, elapsed time, any error. |
@@ -36,6 +38,7 @@ an envelope, never an exception the transport has to render.
 | [`dubforge_retry_job`](#dubforge_retry_job) | Re-queue a failed, interrupted or cancelled job, within the configured retry budget. |
 | [`dubforge_submit_job`](#dubforge_submit_job) | Start a dub in the background and return a job id immediately. |
 | [`dubforge_validate_config`](#dubforge_validate_config) | Check a settings file and the environment, without starting any work. |
+| [`dubforge_validate_review`](#dubforge_validate_review) | Check a review file against its job before applying it: schema, staleness, |
 | [`dubforge_version`](#dubforge_version) | Version of the running dubforge package, plus the error codes this server can return. |
 | [`get_qc`](#get_qc) | Read the QC report of a finished run from its work directory. |
 | [`list_providers`](#list_providers) | Every adapter with readiness, capabilities, honest quality note and the `verified` flag. |
@@ -75,6 +78,19 @@ glossary:   term=rendering,term2=rendering2
 | `loudness_lufs` | no | number | `-16.0` |
 | `dry_run` | no | boolean | `False` |
 | `transcript` | no | string | `''` |
+
+
+## `dubforge_apply_review`
+
+Apply the edits in a validated review file, re-rendering only the changed lines.
+
+A new output file is written; the previous one is untouched. Applying the same file
+twice is a no-op the second time.
+
+| Parameter | Required | Type | Default / allowed |
+| --- | --- | --- | --- |
+| `review_path` | yes | string | — |
+| `output` | no | string | `''` |
 
 
 ## `dubforge_cancel_job`
@@ -125,6 +141,19 @@ What a dub would cost at list prices, and whether your limits allow it. Spends n
 | `asr` | no | string | `''` |
 | `translator` | no | string | `''` |
 | `tts` | no | string | `''` |
+
+
+## `dubforge_export_review`
+
+Export a review file for a finished job: one editable row per line.
+
+Edit `edited_target_text` (or set `regenerate`), then `dubforge_apply_review`. Paths,
+job ownership and provider credentials are not editable through a review file.
+
+| Parameter | Required | Type | Default / allowed |
+| --- | --- | --- | --- |
+| `job_id` | yes | string | — |
+| `out` | no | string | `''` |
 
 
 ## `dubforge_get_capabilities`
@@ -227,6 +256,16 @@ Check a settings file and the environment, without starting any work.
 | Parameter | Required | Type | Default / allowed |
 | --- | --- | --- | --- |
 | `config_path` | no | string | `''` |
+
+
+## `dubforge_validate_review`
+
+Check a review file against its job before applying it: schema, staleness,
+unknown or duplicated segments, oversized or non-string text.
+
+| Parameter | Required | Type | Default / allowed |
+| --- | --- | --- | --- |
+| `review_path` | yes | string | — |
 
 
 ## `dubforge_version`

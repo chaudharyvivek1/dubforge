@@ -74,6 +74,10 @@ starting any work.
 | `job_heartbeat_stale_s` | `DUBFORGE_JOB_HEARTBEAT_STALE_S` | `float` | `180.0` | 10 – 7200 |
 | `job_heartbeat_interval_s` | `DUBFORGE_JOB_HEARTBEAT_INTERVAL_S` | `float` | `15.0` | 1 – 600 |
 | `segment_reuse` | `DUBFORGE_SEGMENT_REUSE` | `bool` | `True` | — |
+| `segment_lock_wait_s` | `DUBFORGE_SEGMENT_LOCK_WAIT_S` | `float` | `30.0` | 0 – 600 |
+| `stem_cache` | `DUBFORGE_STEM_CACHE` | `bool` | `True` | — |
+| `stem_cache_max_bytes` | `DUBFORGE_STEM_CACHE_MAX_BYTES` | `int` | `8589934592` | 0 – 1099511627776 |
+| `overwrite_output` | `DUBFORGE_OVERWRITE_OUTPUT` | `bool` | `False` | — |
 | `retranslate` | `DUBFORGE_RETRANSLATE` | `bool` | `True` | — |
 | `qc_max_chars_per_line` | `DUBFORGE_QC_MAX_CHARS_PER_LINE` | `int` | `42` | 10 – 120 |
 | `qc_max_lines` | `DUBFORGE_QC_MAX_LINES` | `int` | `2` | 1 – 4 |

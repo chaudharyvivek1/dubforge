@@ -430,6 +430,7 @@ def fake_pipeline(monkeypatch):
         transcript_json = ""
         subtitles = {}
         report = ""
+        review = ""  # the pipeline writes review.json since 0.4.0
         providers_used = {"asr": "stub", "tts": "stub"}
         warnings: list = []
         retries: list = []

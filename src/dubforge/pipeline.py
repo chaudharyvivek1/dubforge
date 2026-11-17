@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import alignment, events, ffmpeg, fit, qc, srt, timeline
+from . import alignment, events, ffmpeg, fit, qc, srt, stems, timeline
 from . import limits as limits_mod
 from . import segments as segment_store
 from .config import Settings
@@ -120,6 +120,8 @@ class DubResult:
     alignment: dict = field(default_factory=dict)
     reused_segments: int = 0
     rendered_segments: int = 0
+    stems_reused: int = 0
+    stems_rendered: int = 0
     transcript_json: str = ""
     subtitles: dict = field(default_factory=dict)
     qc: dict = field(default_factory=dict)
@@ -145,6 +147,8 @@ class DubResult:
             "review": self.review,
             "reused_segments": self.reused_segments,
             "rendered_segments": self.rendered_segments,
+            "stems_reused": self.stems_reused,
+            "stems_rendered": self.stems_rendered,
             "subtitles": self.subtitles,
             "qc": self.qc,
             "plan": self.plan,
@@ -405,6 +409,44 @@ def _save_cached(
         thread_lock.release()
 
 
+def _validate_output(path: Path, source_info) -> None:
+    """A finished mux must be readable, non-empty, and contain the dub.
+
+    Publishing a file that cannot be probed is how a broken run looks like a successful one,
+    so this is checked *before* the temporary file is moved into place.
+    """
+    if not path.exists() or path.stat().st_size < 1024:
+        raise DubError(f"the muxed output is missing or empty: {path}")
+    try:
+        info = ffmpeg.probe(str(path))
+    except ffmpeg.FFmpegError as exc:
+        raise DubError(f"the muxed output cannot be read back: {exc}") from exc
+    if not info.has_audio:
+        raise DubError("the muxed output has no audio stream")
+    if source_info is not None and source_info.has_video and not info.has_video:
+        raise DubError("the muxed output lost the video stream")
+    if (
+        info.duration
+        and source_info is not None
+        and source_info.duration
+        and abs(info.duration - source_info.duration) > 5.0
+    ):
+        raise DubError(
+            f"the muxed output is {info.duration:.1f}s against a "
+            f"{source_info.duration:.1f}s source — refusing to publish it"
+        )
+
+
+def _separator_name(settings: Settings) -> str:
+    """The separator identity for the stem cache key (the name it would resolve to)."""
+    if not settings.keep_background:
+        return "none"
+    try:
+        return registry.resolve_chain("separator", settings)[0].name
+    except (ProviderUnavailable, ProviderError):
+        return settings.separator or "auto"
+
+
 def _load_supplied_transcript(path: str | Path) -> Transcript:
     """Load a transcript the caller already has: a JSON dump, or a plain `.srt`."""
     source = Path(path).expanduser()
@@ -554,6 +596,8 @@ def _write_review(
                 "warnings": list(seg.notes),
             }
         )
+    stage_seconds = {step.name: round(step.seconds, 2) for step in result.steps if step.seconds}
+    total_segments = max(1, len(segments))
     payload = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source": str(settings.workdir and Path(result.output).name),
@@ -569,6 +613,19 @@ def _write_review(
             "warnings": result.qc.get("warnings", []),
         },
         "run_warnings": result.warnings,
+        # Honest accounting: what was reused and what was rebuilt. A remix always rebuilds
+        # the dialogue track and the mix, so "5 lines regenerated" never means "5 lines of
+        # work" — the numbers below say what actually ran.
+        "work": {
+            "segments": len(segments),
+            "reused_renders": result.reused_segments,
+            "rendered_segments": result.rendered_segments,
+            "stems_reused": result.stems_reused,
+            "stems_rendered": result.stems_rendered,
+            "cache_hit_ratio": round(result.reused_segments / total_segments, 3),
+            "rebuilt_stages": ["dialogue track", "normalisation", "ducking", "mix", "mux"],
+            "stage_seconds": stage_seconds,
+        },
         "segments": rows,
         "note": (
             "One row per line, for human review. `alignment.sentence_level_only` means the "
@@ -576,6 +633,11 @@ def _write_review(
         ),
     }
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
+    # A static page beside it, for a human: no server, no remote assets, no secrets.
+    from .review import to_html
+
+    with contextlib.suppress(OSError):
+        atomic_write_text(path.with_suffix(".html"), to_html(payload))
     return str(path)
 
 
@@ -784,7 +846,30 @@ def dub(
 
     # 2 — bed ------------------------------------------------------------------
     bed_path: str | None = None
-    if settings.keep_background:
+    stems_reused = 0
+    stems_rendered = 0
+    # The stem cache lives beside the job directories, keyed by content, so two jobs of the
+    # same source (Hindi and Tamil, say) separate the bed once between them.
+    stem_cache = (
+        stems.StemCache(Path(settings.workdir) / "cache" / "stems") if settings.stem_cache else None
+    )
+    stem_key = None
+    if settings.keep_background and stem_cache is not None:
+        stem_key = stems.cache_key(
+            source_hash=fingerprint,
+            separator=_separator_name(settings),
+            keep_background=True,
+            sample_rate=48000,
+        )
+        cached_stem = stem_cache.find(stem_key)
+        if cached_stem is not None:
+            bed_path = stem_cache.restore(cached_stem, work / "stems" / "bed.wav")
+            stems_reused = 1
+            result.steps.append(
+                Step("separate stems", 0.0, f"reused the cached bed ({stem_key[:8]})")
+            )
+            say(f"· separate stems — reused cache ({stem_key[:8]})")
+    if settings.keep_background and bed_path is None:
 
         def _separate():
             provider, pair = try_stage(
@@ -798,6 +883,22 @@ def dub(
             separator, separated = step("separate stems", _separate)
             _vocals, bed = separated
             bed_path = bed
+            stems_rendered = 1 if bed else 0
+            if bed and stem_cache is not None and stem_key:
+                with stem_cache.claim(stem_key, wait=settings.segment_lock_wait_s) as owned:
+                    if owned:
+                        stem_cache.save(
+                            stems.StemRecord(
+                                key=stem_key,
+                                bed="",
+                                bed_sha256="",
+                                duration_s=float(info.duration or 0.0),
+                                source_hash=fingerprint,
+                                separator=_separator_name(settings),
+                                sample_rate=48000,
+                            ),
+                            bed,
+                        )
             if not bed:
                 result.warnings.append(
                     f"separator '{separator.name}' returned no bed; the dub will replace the whole soundtrack"
@@ -1037,8 +1138,17 @@ def dub(
             language=settings.target_lang,
             sample_rate=48000,
         )
-        if store is not None:
-            cached = store.find(seg.seg_id, want)
+
+        # Own the segment *before* calling a paid provider, then re-check the cache under
+        # that ownership. Two workers that both missed must not both synthesise the line.
+        claim = (
+            store.claim(seg.seg_id, wait=settings.segment_lock_wait_s)
+            if store is not None
+            else None
+        )
+        owned = claim.__enter__() if claim is not None else False
+        try:
+            cached = store.find(seg.seg_id, want) if store is not None else None
             if cached is not None:
                 segment_store.restore(cached, path)
                 seg.audio_path = path
@@ -1048,77 +1158,87 @@ def dub(
                 reused_lines += 1
                 _place(seg)
                 continue
-        try:
-            provider, rendered = try_stage(
-                "tts",
-                f"synthesise line {seg.index}",
-                # Bind the loop variables: a late-bound closure would synthesise the last
-                # line's text into the first line's file.
-                lambda prov, _seg=seg, _path=path: _synth(prov, _seg, _path),
-            )
-            if isinstance(rendered, tuple):  # (SynthResult, [Word, ...]) from a provider
-                rendered, words = rendered
-                if words:
-                    alignment.attach_measured(seg, words, provider.name)
-            if provider.name != active_tts.name:
-                # The fallback provider does not know the first provider's voice ids.
-                # Re-map from what it offers, and say so — a voice change is audible.
-                active_tts = provider
-                voice_map = _pick_voices(settings, active_tts, speakers)
-                for remaining in segments[seg.index :]:
-                    remaining.voice = voice_map.get(remaining.speaker, "")
+            if store is not None and not owned:
+                # Somebody else is rendering this line and we could not wait for them. Render
+                # without the cache: slower, never wrong, and it cannot corrupt their record.
                 result.warnings.append(
-                    f"voices re-assigned from {active_tts.name}: the previous provider failed mid-run"
+                    f"line {seg.index}: segment lock busy, rendered without cache reuse"
                 )
-            # A provider can answer 200 with a zero-byte body or a silent file. Left
-            # unchecked, that line "succeeds", the timeline gets a 0s clip, and QC reports a
-            # dub with a hole in it that nobody notices until playback.
-            if not rendered.path or not Path(rendered.path).exists():
-                raise ProviderError(f"line {seg.index}: provider returned no audio file")
-            if Path(rendered.path).stat().st_size < 128:
-                raise ProviderError(
-                    f"line {seg.index}: provider returned an empty audio file "
-                    f"({Path(rendered.path).stat().st_size} bytes)"
+            try:
+                provider, rendered = try_stage(
+                    "tts",
+                    f"synthesise line {seg.index}",
+                    # Bind the loop variables: a late-bound closure would synthesise the last
+                    # line's text into the first line's file.
+                    lambda prov, _seg=seg, _path=path: _synth(prov, _seg, _path),
                 )
-            measured = ffmpeg.duration_of(rendered.path)
-            if measured is None or measured < 0.02:
-                raise ProviderError(
-                    f"line {seg.index}: provider returned {measured or 0:.3f}s of audio — "
-                    "nothing to place"
-                )
-            seg.audio_path = rendered.path
-            seg.raw_duration = rendered.duration or measured
-            seg.render_fingerprint = want
-            seg.regenerated = True
-            rendered_lines += 1
-            if store is not None:
-                # Cache the *raw* render, before the window-specific stretch.
-                with store.claim(seg.seg_id) as claimed:
-                    if claimed:
-                        store.save(
-                            segment_store.RenderRecord(
-                                seg_id=seg.seg_id,
-                                fingerprint=want,
-                                audio="",
-                                audio_sha256="",
-                                duration_s=float(seg.raw_duration or measured),
-                                provider=provider.name,
-                                voice=seg.voice or "",
-                                model=settings.tts_model or "",
-                                language=settings.target_lang,
-                                target_text=seg.speech,
-                                style=seg.style or "",
-                                emotion=settings.emotion or "",
-                                sample_rate=48000,
-                                timing={"start": seg.start, "end": seg.end, "window": seg.window},
-                                meta={"words": len(seg.target_words), "alignment": seg.alignment},
-                            ),
-                            seg.audio_path,
-                        )
-        except (ProviderError, ffmpeg.FFmpegError, OSError) as exc:
-            failures.append(f"line {seg.index}: {exc}")
-            continue
-        _place(seg)
+                if isinstance(rendered, tuple):  # (SynthResult, [Word, ...]) from a provider
+                    rendered, words = rendered
+                    if words:
+                        alignment.attach_measured(seg, words, provider.name)
+                if provider.name != active_tts.name:
+                    # The fallback provider does not know the first provider's voice ids.
+                    # Re-map from what it offers, and say so — a voice change is audible.
+                    active_tts = provider
+                    voice_map = _pick_voices(settings, active_tts, speakers)
+                    for remaining in segments[seg.index :]:
+                        remaining.voice = voice_map.get(remaining.speaker, "")
+                    result.warnings.append(
+                        f"voices re-assigned from {active_tts.name}: the previous provider "
+                        "failed mid-run"
+                    )
+                # A provider can answer 200 with a zero-byte body or a silent file. Left
+                # unchecked, that line "succeeds", the timeline gets a 0s clip, and QC reports
+                # a dub with a hole in it that nobody notices until playback.
+                if not rendered.path or not Path(rendered.path).exists():
+                    raise ProviderError(f"line {seg.index}: provider returned no audio file")
+                if Path(rendered.path).stat().st_size < 128:
+                    raise ProviderError(
+                        f"line {seg.index}: provider returned an empty audio file "
+                        f"({Path(rendered.path).stat().st_size} bytes)"
+                    )
+                measured = ffmpeg.duration_of(rendered.path)
+                if measured is None or measured < 0.02:
+                    raise ProviderError(
+                        f"line {seg.index}: provider returned {measured or 0:.3f}s of audio — "
+                        "nothing to place"
+                    )
+                seg.audio_path = rendered.path
+                seg.raw_duration = rendered.duration or measured
+                seg.render_fingerprint = want
+                seg.regenerated = True
+                rendered_lines += 1
+                if store is not None and owned:
+                    # Cache the *raw* render, before the window-specific stretch.
+                    store.save(
+                        segment_store.RenderRecord(
+                            seg_id=seg.seg_id,
+                            fingerprint=want,
+                            audio="",
+                            audio_sha256="",
+                            duration_s=float(seg.raw_duration or measured),
+                            provider=provider.name,
+                            voice=seg.voice or "",
+                            model=settings.tts_model or "",
+                            language=settings.target_lang,
+                            target_text=seg.speech,
+                            style=seg.style or "",
+                            emotion=settings.emotion or "",
+                            sample_rate=48000,
+                            timing={"start": seg.start, "end": seg.end, "window": seg.window},
+                            meta={"words": len(seg.target_words), "alignment": seg.alignment},
+                        ),
+                        seg.audio_path,
+                    )
+            except (ProviderError, ffmpeg.FFmpegError, OSError) as exc:
+                failures.append(f"line {seg.index}: {exc}")
+                continue
+            _place(seg)
+        finally:
+            if claim is not None:
+                claim.__exit__(None, None, None)
+    result.stems_reused = stems_reused
+    result.stems_rendered = stems_rendered
     result.steps.append(
         Step(
             "synthesise",
@@ -1190,32 +1310,54 @@ def dub(
         Path(output).parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise DubError(f"cannot create the output folder {Path(output).parent}: {exc}") from exc
-    if info.has_video:
-        step(
-            "mux video + dub",
-            lambda: (
-                ffmpeg.mux(source, mixed, output, settings.audio_bitrate),
-                "video stream copied",
-            ),
+    # 11 — publish: mux to a temporary destination, validate it, then move it into place.
+    # A failed mux must not destroy the file it was replacing.
+    destination = Path(output)
+    partial = destination.with_name(f"{destination.stem}.partial{destination.suffix}")
+    if destination.exists() and not settings.overwrite_output:
+        raise DubError(
+            f"{destination} already exists; pass --overwrite (or DUBFORGE_OVERWRITE_OUTPUT=1) "
+            "to replace it, or choose another --out"
         )
-    else:
-        step(
-            "encode audio",
-            lambda: (ffmpeg.mux_audio_only(mixed, output, settings.audio_bitrate), "aac"),
-        )
-
-    # 10 — optional lip sync ---------------------------------------------------
-    if settings.lipsync and settings.lipsync != "none":
-        lipsync = registry.resolve("lipsync", settings)
-        try:
-            synced = step(
-                f"lip sync ({lipsync.name})",
-                lambda: (lipsync.sync(output, output, str(work / "synced.mp4")), lipsync.name),
+    try:
+        if info.has_video:
+            step(
+                "mux video + dub",
+                lambda: (
+                    ffmpeg.mux(source, mixed, str(partial), settings.audio_bitrate),
+                    "video stream copied",
+                ),
             )
-            if synced and Path(synced).exists() and str(synced) != output:
-                shutil.copy(synced, output)
-        except ProviderError as exc:
-            result.warnings.append(f"lip sync skipped: {exc}")
+        else:
+            step(
+                "encode audio",
+                lambda: (ffmpeg.mux_audio_only(mixed, str(partial), settings.audio_bitrate), "aac"),
+            )
+
+        # 10 — optional lip sync, still into the temporary file -----------------
+        if settings.lipsync and settings.lipsync != "none":
+            lipsync = registry.resolve("lipsync", settings)
+            try:
+                synced = step(
+                    f"lip sync ({lipsync.name})",
+                    lambda: (
+                        lipsync.sync(str(partial), str(partial), str(work / "synced.mp4")),
+                        lipsync.name,
+                    ),
+                )
+                if synced and Path(synced).exists() and Path(synced) != partial:
+                    shutil.copy(synced, partial)
+            except ProviderError as exc:
+                result.warnings.append(f"lip sync skipped: {exc}")
+
+        # The output is only *published* once the file is complete and readable.
+        _validate_output(partial, info)
+        os.replace(partial, destination)
+    except Exception:
+        with contextlib.suppress(OSError):
+            partial.unlink()  # an incomplete mux must not survive as a plausible file
+        raise
+    output = str(destination)
 
     # 11 — deliverables --------------------------------------------------------
     # Record what ran and what was retried *before* the report is written, so the report

@@ -22,6 +22,8 @@ Exit codes: `0` success, `1` QC failed (the run finished and the dub did not pas
 | [`dubforge capabilities`](#dubforge-capabilities) | what this install can do, in JSON or prose |
 | [`dubforge validate-config`](#dubforge-validate-config) | check a settings file and the environment |
 | [`dubforge jobs`](#dubforge-jobs) | list, inspect, cancel, retry or clean up jobs |
+| [`dubforge review`](#dubforge-review) | export, validate or apply a human review file |
+| [`dubforge cache`](#dubforge-cache) | inspect or clean the content caches |
 | [`dubforge regen`](#dubforge-regen) | re-dub one job with edited lines, reusing untouched renders |
 | [`dubforge batch`](#dubforge-batch) | dub a folder (or a list of files) through the same pipeline |
 | [`dubforge mcp`](#dubforge-mcp) | run the MCP server on stdio |
@@ -91,6 +93,7 @@ dub the file
 | `--workdir` | where intermediates go (default dubforge-work) | — |
 | `--json` | machine-readable output | off |
 | `--out` | output file (default: <name>.<lang>.mp4 next to the input) | — |
+| `--overwrite` | replace an existing output file (default: refuse, and say so) | `False` |
 | `--from` | source language code, or auto | — |
 | `--to` | target language code, e.g. hi, ta, es, en | — |
 | `--asr` | speech recognition provider (default auto) | — |
@@ -189,6 +192,35 @@ list, inspect, cancel, retry or clean up jobs
 Positional arguments: `action`, `job_id`
 
 
+## `dubforge review`
+
+export, validate or apply a human review file
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `--config` | JSON settings file (keys and values as in Settings) | — |
+| `--workdir` | where intermediates go (default dubforge-work) | — |
+| `--json` | machine-readable output | off |
+| `--out` | where to write the review file, or the new dub | — |
+
+Positional arguments: `action`, `path_or_id`
+
+
+## `dubforge cache`
+
+inspect or clean the content caches
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `--config` | JSON settings file (keys and values as in Settings) | — |
+| `--workdir` | where intermediates go (default dubforge-work) | — |
+| `--json` | machine-readable output | off |
+| `--older-than` | clean: only entries older than N days | `0` |
+| `--yes` | clean: actually delete (default is a dry run) | `False` |
+
+Positional arguments: `action`
+
+
 ## `dubforge regen`
 
 re-dub one job with edited lines, reusing untouched renders
@@ -200,6 +232,7 @@ re-dub one job with edited lines, reusing untouched renders
 | `--json` | machine-readable output | off |
 | `--set` | replace a line's translation, by segment id or index (repeatable) | — |
 | `--out` | output path (default: <previous>.r<N>.mp4, never the old file) | — |
+| `--overwrite` | replace an existing output file (default: refuse) | `False` |
 
 Positional arguments: `job_id`
 

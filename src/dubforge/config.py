@@ -47,6 +47,8 @@ NUMERIC_RANGES: dict[str, tuple[float, float]] = {
     "qc_max_audible_speed": (1.0, 2.0),
     "qc_line_silence_ratio": (0.1, 1.0),
     "qc_silence_sample": (0, 500),
+    "segment_lock_wait_s": (0.0, 600.0),
+    "stem_cache_max_bytes": (0, 1 << 40),
 }
 
 
@@ -151,6 +153,16 @@ class Settings:
     # Reuse a line's raw render when its text, voice, provider, model, language, style and
     # sample rate are unchanged. Off only for debugging.
     segment_reuse: bool = True
+    # How long a worker waits for another worker to finish the same line before rendering
+    # it anyway (slower, never wrong).
+    segment_lock_wait_s: float = 30.0
+    # Reuse the separated background bed across runs (0.4.0). Separation is the most
+    # expensive local stage and depends only on the source and the separator.
+    stem_cache: bool = True
+    stem_cache_max_bytes: int = 8 * 1024**3
+    # Publishing over an existing file is opt-in: a silent overwrite of a good dub is not a
+    # convenience, it is data loss.
+    overwrite_output: bool = False
     # A regeneration keeps the edited translations; a normal run translates.
     retranslate: bool = True
 

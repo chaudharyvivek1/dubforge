@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +46,11 @@ FINGERPRINT_FIELDS = (
 )
 
 LOCK_STALE_S = 120.0
+
+
+def _can_probe_pid() -> bool:
+    """Whether a pid means anything here. On Windows it does not (see jobs.py)."""
+    return os.name != "nt"
 
 
 @dataclass
@@ -154,35 +160,80 @@ class SegmentStore:
 
     # ------------------------------------------------------------------- write
     @contextlib.contextmanager
-    def claim(self, seg_id: str):
-        """One worker per segment. A stale lock (a killed worker) is reclaimed by age."""
+    def claim(self, seg_id: str, wait: float = 0.0, poll: float = 0.05):
+        """Exclusive ownership of one segment, with a token, for the whole synthesis.
+
+        The point is to own the segment **before** calling a paid provider, then re-check the
+        cache under that ownership: two workers that both miss must not both synthesise.
+
+        Waiting is bounded (`wait` seconds). A lock is stolen only when its *owner* is gone —
+        a dead pid on POSIX, or an age past `LOCK_STALE_S` where a pid cannot be probed — so a
+        slow-but-live worker is never robbed mid-render. If the wait runs out the caller gets
+        `False` and renders without the cache, which is slower but never wrong.
+        """
         lock = self.dir() / f"{seg_id}.lock"
+        token = uuid.uuid4().hex[:12]
+        deadline = time.time() + max(0.0, wait)
         acquired = False
-        fd = None
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            acquired = True
-        except FileExistsError:
-            # A lock older than the stale window belongs to a worker that died.
-            with contextlib.suppress(OSError):
-                if time.time() - lock.stat().st_mtime > LOCK_STALE_S:
-                    lock.unlink()
+        while True:
+            fd = None
             try:
                 fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
                 acquired = True
+            except FileExistsError:
+                if self._lock_is_stale(lock):
+                    with contextlib.suppress(OSError):
+                        lock.unlink()
+                    continue
+                if time.time() >= deadline:
+                    break
+                time.sleep(poll)
             except OSError:
-                acquired = False
-        except OSError:
-            acquired = False
-        if acquired and fd is not None:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps({"pid": os.getpid(), "at": time.time()}))
+                break
+            if acquired and fd is not None:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps({"pid": os.getpid(), "token": token, "at": time.time()})
+                    )
+            break
         try:
             yield acquired
         finally:
             if acquired:
-                with contextlib.suppress(OSError):
-                    lock.unlink()
+                # Only release our own lock: a stolen one belongs to somebody else now.
+                with contextlib.suppress(OSError, json.JSONDecodeError):
+                    holder = json.loads(lock.read_text(encoding="utf-8"))
+                    if holder.get("token") == token:
+                        lock.unlink()
+
+    @staticmethod
+    def _lock_is_stale(lock: Path) -> bool:
+        """A lock is stale when its *owner* is gone, not merely when it is old.
+
+        The pid is checked first on purpose. An age check that ran first would let a second
+        worker steal the lock from a slow-but-live renderer once it crossed the threshold —
+        two paid syntheses for one line, which is the bug this whole mechanism exists to
+        prevent. Age is only the fallback where a pid cannot be probed (Windows).
+        """
+        try:
+            age = time.time() - lock.stat().st_mtime
+        except OSError:
+            return False  # vanished between the open and the stat: retry the open
+        try:
+            holder = json.loads(lock.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # Created but not yet written: live unless it has been that way for a while.
+            return age > 5.0
+        pid = holder.get("pid")
+        if isinstance(pid, int) and pid != os.getpid() and _can_probe_pid():
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            except (PermissionError, OSError):
+                return False
+            return False
+        return age > LOCK_STALE_S
 
     def save(self, record: RenderRecord, audio_source: str | Path) -> RenderRecord:
         """Copy the render in and write its record — atomically, in that order."""

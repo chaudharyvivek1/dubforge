@@ -32,6 +32,10 @@ EXPECTED_TOOLS = {
     "dubforge_cleanup_jobs",
     # regeneration
     "dubforge_regenerate_segments",
+    # review workflow
+    "dubforge_export_review",
+    "dubforge_validate_review",
+    "dubforge_apply_review",
     # intelligence
     "dubforge_get_capabilities",
     "dubforge_validate_config",

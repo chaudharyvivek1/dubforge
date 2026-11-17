@@ -3,10 +3,10 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-499%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-566%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-22%20tools-6f42c1)](src/dubforge/server.py)
+[![MCP](https://img.shields.io/badge/MCP-25%20tools-6f42c1)](src/dubforge/server.py)
 [![demo offline](https://img.shields.io/badge/demo-no%20key%2C%20no%20network-orange)](#try-it-in-one-command)
 
 **Dub any video into any language — with several AI providers in one pipeline that
@@ -171,7 +171,7 @@ makes the smallest real request each vendor allows, records the date and API ver
 `docs/verification.json`, and a test fails if an adapter claims `verified` without an `ok`
 row there. Nothing is marked verified until someone has actually spent a rupee on it.
 
-Twenty-two tools, and the intended order is in the server's instructions:
+Twenty-five tools, and the intended order is in the server's instructions:
 `dubforge_doctor` → `plan_dub` → `dub_video` (or `dubforge_submit_job` for anything long)
 → read `qc`. Transcripts come back as
 a path and a five-line preview, never as a wall of text.
@@ -238,6 +238,34 @@ with the audio's SHA-256 checked on reuse. The result goes to a new file
 Timing is deliberately *not* part of that key: the stretch depends on the window, which
 changes when a neighbour changes, and re-running atempo costs milliseconds while re-running
 TTS costs money.
+
+## A review loop that costs one synthesis per edit
+
+```bash
+dubforge review export lecture-a1b2c3d4 --out review.json
+# edit `edited_target_text` on the lines that need it
+dubforge review validate review.json
+dubforge review apply review.json          # → a new file, only edited lines synthesised
+```
+
+The file carries the job id and the source's content fingerprint, so a review of a different
+version of the video is refused rather than applied to the wrong film. Unknown or duplicated
+segments, non-string or oversized text, and any attempt to set paths, tokens or provider keys
+are refused too. Applying the same file twice is a no-op. A static `review.html` is written
+beside `review.json` — no server, no remote assets.
+
+## What a re-run actually reuses
+
+| stage | reused on a regeneration? |
+|---|---|
+| separated background bed | yes, when the source and separator match |
+| transcription | yes |
+| TTS renders of unchanged lines | yes, by fingerprint |
+| dialogue track, normalisation, ducking, mux | **no** — they depend on the current dialogue |
+
+`review.json` reports the real numbers (`work.reused_renders`, `work.rendered_segments`,
+`work.stems_reused`, `work.cache_hit_ratio`, `work.rebuilt_stages`), because "5 lines
+regenerated" is not "5 lines of work".
 
 ## Alignment: measured, or absent
 
@@ -368,10 +396,11 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/configuration.md](docs/configuration.md) | **every setting**: environment name, type, default, range (generated) |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
+| [docs/release-0.4.0.md](docs/release-0.4.0.md) | the 0.4.0 checklist: identity, concurrency, stem cache, review loop |
 | [docs/release-0.3.0.md](docs/release-0.3.0.md) | the 0.3.0 checklist: audit, timing rules, alignment, regeneration |
 | [docs/calibration.md](docs/calibration.md) | measured speech rate per language, or an honest estimate |
 | [docs/release-0.2.1.md](docs/release-0.2.1.md) | the 0.2.1 reliability checklist: bugs, fixes, tests, risks |
-| `scripts/benchmark.py` | measure the engine on three media sizes (not in CI, on purpose) |
+| `scripts/benchmark.py` | measure the engine on three media sizes, and a full run against 0/1/5/10% edits (`--regen`) |
 | [docs/release-0.2.0.md](docs/release-0.2.0.md) | the 0.2.0 checklist: job engine, scope, compatibility |
 
 ## Repository layout

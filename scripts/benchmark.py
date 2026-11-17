@@ -161,12 +161,86 @@ def measure(size: str, root: Path) -> dict:
     }
 
 
+def measure_regeneration(size: str, root: Path, counts=(0, 1, 5, "10%")) -> list[dict]:
+    """The comparison the brief asks for: full run, then 0 / 1 / 5 / 10% edited lines.
+
+    Each row reports what actually ran — TTS calls, separation calls, cache hits — because
+    "five lines edited" never means "five lines of work": the dialogue track, the
+    normalisation, the ducking and the mux are rebuilt every time.
+    """
+    media = build_media(size, root / "media")
+    settings = Settings(
+        source_lang="en",
+        target_lang="hi",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="ffmpeg_center",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(root / f"regen-{size}"),
+        cache=False,
+    )
+    started = time.perf_counter()
+    first = pipeline.dub(media, settings, output=root / f"{size}.full.mp4")
+    rows = [
+        {
+            "case": "full run",
+            "segments": int(first.qc.get("metrics", {}).get("segments", 0) or 0)
+            or first.rendered_segments,
+            "tts_calls": first.rendered_segments,
+            "separation_calls": first.stems_rendered,
+            "reused_renders": first.reused_segments,
+            "stems_reused": first.stems_reused,
+            "wall_clock_s": round(time.perf_counter() - started, 2),
+            "peak_rss_mb": _rss_mb(),
+        }
+    ]
+
+    total = max(first.rendered_segments, 1)
+    for count in counts:
+        edits = total if count == "10%" else int(count)
+        edits = max(0, min(edits, total))
+        job_started = time.perf_counter()
+        runner = JobRunner(settings)
+        try:
+            job = runner.submit(media, settings, root / f"{size}.regen-{count}.mp4")
+            runner.wait(job.id, timeout=3600)
+        finally:
+            runner.shutdown(wait=True)
+        mapping = {str(index): f"संपादित पंक्ति {index}।" for index in range(edits)}
+        started = time.perf_counter()
+        result = pipeline.regenerate(
+            job.id, settings, edits=mapping, output=root / f"{size}.regen-{count}.out.mp4"
+        )
+        rows.append(
+            {
+                "case": (
+                    f"regen, {edits} edited" if count != "10%" else f"regen, 10% ({edits} edited)"
+                ),
+                "segments": total,
+                "tts_calls": result.rendered_segments,
+                "separation_calls": result.stems_rendered,
+                "reused_renders": result.reused_segments,
+                "stems_reused": result.stems_reused,
+                "wall_clock_s": round(time.perf_counter() - started, 2),
+                "peak_rss_mb": _rss_mb(),
+            }
+        )
+        _ = job_started
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Benchmark the engine on three media sizes.")
     parser.add_argument("--sizes", default="small,medium,large")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--keep", action="store_true", help="keep the temporary work tree")
     parser.add_argument("--tmp", default="")
+    parser.add_argument(
+        "--regen",
+        action="store_true",
+        help="compare a full run against 0 / 1 / 5 / 10% edited regenerations",
+    )
     args = parser.parse_args(argv)
 
     sizes = [s.strip() for s in args.sizes.split(",") if s.strip()]
@@ -177,7 +251,33 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.tmp) if args.tmp else Path(tempfile.mkdtemp(prefix="dubforge-bench-"))
     rows = []
+    regen_rows: list[dict] = []
     try:
+        if args.regen:
+            for size in sizes:
+                regen_rows = measure_regeneration(size, root)
+                if not args.json:
+                    print(f"\n{size}: {regen_rows[0]['segments']} line(s)")
+                    print(
+                        f"{'case':<20}{'tts':>5}{'sep':>5}{'reused':>8}{'bed':>5}"
+                        f"{'wall':>8}{'rss':>9}"
+                    )
+                    for row in regen_rows:
+                        print(
+                            f"{row['case']:<20}{row['tts_calls']:>5}"
+                            f"{row['separation_calls']:>5}{row['reused_renders']:>8}"
+                            f"{row['stems_reused']:>5}{row['wall_clock_s']:>7.2f}s"
+                            f"{str(row['peak_rss_mb']):>9}"
+                        )
+            payload = {
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "dubforge_version": __version__,
+                "note": "Stub providers. 'tts' counts synthesis calls, 'sep' separation runs.",
+                "results": regen_rows,
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2))
+            return 0
         for size in sizes:
             row = measure(size, root)
             rows.append(row)

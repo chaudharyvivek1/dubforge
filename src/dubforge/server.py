@@ -29,7 +29,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import __version__, capabilities, doctor, ffmpeg, limits, pipeline, qc, srt
+from . import __version__, capabilities, doctor, ffmpeg, limits, pipeline, qc, review, srt
 from .config import ConfigError, Settings, is_language_code
 from .jobs import JobError, JobRunner, JobStore
 from .media import Transcript
@@ -894,6 +894,51 @@ def build_server():
             warnings=result.warnings[:10],
             note="a new file was written; the previous output is untouched",
         )
+
+    @mcp.tool()
+    @guard
+    def dubforge_export_review(job_id: str, out: str = "") -> str:
+        """Export a review file for a finished job: one editable row per line.
+
+        Edit `edited_target_text` (or set `regenerate`), then `dubforge_apply_review`. Paths,
+        job ownership and provider credentials are not editable through a review file.
+        """
+        payload = review.export(job_id, _settings())
+        if out:
+            destination = _path(out, "out", must_exist=False)
+            Path(destination).write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        return _ok(
+            job_id=job_id,
+            segments=len(payload["segments"]),
+            out=out or None,
+            schema=payload["schema"],
+            note="edit edited_target_text, then dubforge_apply_review",
+        )
+
+    @mcp.tool()
+    @guard
+    def dubforge_validate_review(review_path: str) -> str:
+        """Check a review file against its job before applying it: schema, staleness,
+        unknown or duplicated segments, oversized or non-string text."""
+        path = _path(review_path, "review_path", must_exist=True)
+        verdict = review.validate(path, _settings())
+        return _ok(**verdict)
+
+    @mcp.tool()
+    @guard
+    def dubforge_apply_review(review_path: str, output: str = "") -> str:
+        """Apply the edits in a validated review file, re-rendering only the changed lines.
+
+        A new output file is written; the previous one is untouched. Applying the same file
+        twice is a no-op the second time.
+        """
+        path = _path(review_path, "review_path", must_exist=True)
+        if output:
+            _path(output, "output", must_exist=False)
+        outcome = review.apply(path, _settings(), output=output or None)
+        return _ok(**outcome)
 
     # ------------------------------------------------------------ intelligence
     @mcp.tool()

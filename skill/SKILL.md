@@ -130,6 +130,28 @@ dubforge_regenerate_segments job_id="lecture-a1b2c3d4" edits="3=यह संप
 * A retry or a fresh submit re-renders everything; regeneration is the cheap path and it
   needs a job that already finished with a transcript.
 
+### 5b3. The review loop
+
+```
+dubforge_export_review job_id="lecture-a1b2c3d4" out="review.json"
+→ {"segments": 300, "schema": 1}
+```
+
+The user edits `edited_target_text` on the lines that need it, then:
+
+```
+dubforge_validate_review review_path="review.json"   → {"ok": true, "edits": 5}
+dubforge_apply_review review_path="review.json"      → {"applied": 5, "rendered_segments": 5,
+                                                        "reused_segments": 295, "stems_reused": 1}
+```
+
+* A review file carries the job id and the source's content fingerprint: a file made from a
+  different version of the video is **refused**, not applied.
+* Only edited lines are synthesised; the bed and every unchanged render are reused. The
+  dialogue track, normalisation, ducking and mux are always rebuilt — say that, do not claim
+  "only five lines were processed".
+* Applying the same file twice is a no-op.
+
 ### 5c. Cost safety when a provider is slow or failing
 
 A timeout on a non-idempotent call (synthesis, translation, transcription) is **not**
@@ -210,6 +232,6 @@ Offer a re-run with changes rather than claiming perfection.
 * `references/jobs.md` — the job tools: identity, claims, attempts, heartbeat, cancellation.
 * `references/batch.md` — folders, collisions, resume, a school or studio workflow.
 * `references/reliability.md` — retries, idempotency, provider health, fallback, events.
-* `references/review.md` — the `review.json` artifact, alignment honesty, and how to hand a
-  dub to a human reviewer.
+* `references/review.md` — the review loop (`export` → edit → `validate` → `apply`), the
+  `review.json` artifact, alignment honesty, and what a re-run actually reuses.
 * `references/troubleshooting.md` — error messages and what they actually mean.

@@ -2,6 +2,101 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.4.0] — 2026-11-20
+
+Incremental processing, honest job identity and a working human review loop. Three confirmed
+identity defects, one concurrency defect, and a cache that makes regeneration cheap.
+
+### Fixed — job identity (P0)
+
+* **`source_fingerprint()` was `size:mtime_ns`.** Two different videos of equal size with
+  equal timestamps — a copy, or a re-encode that preserved the size — were the *same job*.
+  It is now a streamed SHA-256 plus the size, memoised per `(path, size, mtime)` so a submit
+  hashes once and every later call in the run is free. Content is the identity: a rename keeps
+  the job, a byte change does not.
+* **`retranslate` was missing from `REQUEST_FIELDS`.** Two runs that produce different
+  translations shared one identity. `retranslate`, `lipsync` and `separator` are now part of
+  it; limits, logging and paths deliberately are not.
+* **A supplied transcript was identified by its path.** Editing the file in place kept the
+  same job. The transcript's bytes are now hashed into the request identity, so an in-place
+  edit is a new request and a copy under another name is the same one.
+
+### Fixed — segment concurrency (P1)
+
+* **The segment lock was taken after synthesis**, so two workers that both missed the cache
+  both called a paid provider; the lock only decided who wrote last. The order is now
+  claim → re-check the cache under the claim → synthesise → save → release.
+* Locks carry an owner token and are stolen only when the owner is **gone** (dead pid), never
+  merely because they are old — an age-first check would let a second worker rob a slow but
+  live renderer, which is the same duplicate spend in a different disguise.
+* Waiting is bounded (`segment_lock_wait_s`, 30 s). A worker that cannot get the lock renders
+  anyway and says so: slower, never wrong. Cross-process tests use `spawn` and count writes.
+
+### Added — source-stem cache (P1)
+
+* `stems.py` caches the separated background bed, keyed on the source content hash, the
+  separator, its model, `keep_background` and the sample rate. Regeneration no longer repeats
+  separation: in the benchmark a re-run reuses the bed and all unchanged renders.
+* Integrity: SHA-256 per bed, atomic writes, an exclusive claim while separating, corrupted or
+  empty beds are misses, and `dubforge cache info|clean` reports and bounds the cache (dry run
+  by default).
+* **The final mix is never cached.** Its ducking envelope depends on the current dialogue, so
+  `review.json` lists `dialogue track`, `normalisation`, `ducking`, `mix` and `mux` as
+  rebuilt on every run, whatever the reuse ratio says.
+
+### Added — review workflow (P1)
+
+* `review.py` + `dubforge review export|validate|apply` + three MCP tools: export one editable
+  row per line, validate against the job, apply only the changed lines.
+* Validation refuses an unknown schema, a stale file (source fingerprint mismatch), unknown or
+  duplicated segments, non-string or oversized text, and any attempt to set paths, tokens or
+  provider keys. Applying twice is a no-op the second time.
+* A static `review.html` is written beside `review.json`: no server, no remote assets, changed
+  rows highlighted, alignment precision stated per line.
+
+### Added — output safety (P1)
+
+* The mux now writes a `.partial` file, validates it (readable, has audio, kept its video,
+  duration within 5 s of the source), and only then moves it into place. A failed mux deletes
+  the partial and leaves the previous output untouched.
+* Overwriting is opt-in (`--overwrite` / `overwrite_output`). An existing output is refused
+  with an explanation rather than silently replaced.
+
+### Added — work accounting (P1)
+
+* `review.json` gained a `work` block: segments, reused renders, rendered segments, stems
+  reused and rendered, cache hit ratio, the stages that were rebuilt, and per-stage seconds.
+  A run that reuses 295 of 300 renders still rebuilds the dialogue track and the mix, and the
+  report says so.
+
+### Changed
+
+* `Job` records the source fingerprint and the review path; `Job.summary()` exposes both.
+* New settings: `segment_lock_wait_s`, `stem_cache`, `stem_cache_max_bytes`, `overwrite_output`.
+* New CLI: `dubforge review export|validate|apply`, `dubforge cache info|clean`,
+  `--overwrite` on `dub` and `regen`. New MCP tools: 25 total.
+
+### Documentation
+
+* `ROADMAP.md` and `docs/assessment.md` corrected: both described 0.2.1 as current and listed
+  features as missing that 0.2.x and 0.3.0 shipped (per-segment regeneration, subtitle
+  line-length and reading-speed validation, review artifacts).
+
+### Tests
+
+499 → 566. New: identity (17), segment concurrency across processes (12), stems (14), review
+workflow (17), output safety (6), benchmark regeneration comparison (1).
+
+### Known limitations
+
+* Remixing is still whole-track: unchanged renders and the bed are reused, but the dialogue
+  track, normalisation, ducking and mux are rebuilt. Partial remixing is the next milestone.
+* Word-level alignment remains provider-dependent and unverified live; every run says
+  "sentence-level timing only".
+* Calibration still has no measured samples.
+* Hashing the source costs one read of the file per job; on a 2 GB film that is a second or
+  two on a local disk, and it is the price of not confusing two videos.
+
 ## [0.3.0] — 2026-11-19
 
 A quality release: the timing model stops colliding lines, alignment is measured or absent

@@ -192,6 +192,44 @@ The design decisions worth knowing:
   only when the call is idempotent or carries a vendor-documented idempotency key. Otherwise
   the error is `kind="ambiguous"` and says the request may have been billed.
 
+## What a re-run reuses, and what it always rebuilds (0.4.0)
+
+Regenerating five lines of a 300-line film does **not** mean five lines of work. The honest
+table:
+
+| stage | reused? | why |
+|---|---|---|
+| source hashing | memoised per process | identity, not output |
+| probe / extraction | no | one decode pass, cheap |
+| separation (the bed) | **yes**, if the source and separator match | the expensive local stage, and it does not depend on dialogue |
+| transcription | **yes**, from the transcript cache or a supplied file | keyed on the source content |
+| translation | skipped in a regeneration | the edits are the translation |
+| TTS renders | **yes**, per line, by fingerprint | unchanged text and voice |
+| stretch to window | no | depends on the window, which neighbours change; milliseconds |
+| dialogue track assembly | no | a changed line moves its neighbours |
+| loudness normalisation | no | it is a property of the whole mix |
+| ducking | no | the envelope follows the current dialogue — reusing it would be wrong |
+| mux | no | the file is rebuilt, into a temporary path first |
+
+`review.json` carries this as data: `work.reused_renders`, `work.rendered_segments`,
+`work.stems_reused`, `work.cache_hit_ratio`, `work.rebuilt_stages` and per-stage seconds.
+
+## Publishing an output (0.4.0)
+
+The mux writes `<name>.partial<ext>`, the result is probed (readable, audio present, video
+kept, duration within 5 s of the source), and only then is it moved onto the destination with
+`os.replace`. A failure deletes the partial and leaves the previous output exactly as it was.
+Replacing an existing file requires `--overwrite`; without it the run stops and says so.
+
+## Job identity (0.4.0)
+
+`jobs.source_fingerprint()` streams a SHA-256 of the source and appends its size. The hash is
+memoised per `(path, size, mtime_ns)` for the life of the process, so a submit hashes once and
+retry, plan and the id reuse it. A rename keeps the identity (content is the identity); a byte
+change does not. `REQUEST_FIELDS` covers what changes the artifact — including `retranslate`,
+`lipsync` and `separator` — and deliberately excludes limits, logging and local paths. A
+supplied transcript enters the identity as a hash of its bytes, never as a path.
+
 ## Measuring it (0.2.1)
 
 ```bash

@@ -114,6 +114,10 @@ REQUEST_FIELDS = (
     "transcript",
     "script",
     "fallback",
+    # 0.4.0: these change the artifact and were missing from the identity.
+    "retranslate",  # keeps supplied translations instead of translating again
+    "lipsync",  # re-renders the picture when it is not "none"
+    "separator",  # a different stem split produces a different bed
 )
 
 
@@ -144,19 +148,42 @@ def _pid_alive(pid: int | None) -> bool:
 # --------------------------------------------------------------------------- identity
 
 
-def request_fingerprint(settings: Settings, source_fingerprint: str = "") -> str:
-    """A stable hash of everything that changes the result of a dub."""
+def request_fingerprint(
+    settings: Settings, source_fingerprint: str = "", transcript_hash: str = ""
+) -> str:
+    """A stable hash of everything that changes the result of a dub.
+
+    A supplied transcript is identified by its **content**, not its path: the same file
+    edited in place must be a different request, and a transcript copied to a new name must
+    be the same one.
+    """
     payload = {}
     for name in REQUEST_FIELDS:
         value = getattr(settings, name, None)
+        if name == "transcript":
+            # The path is not identity: the content is (see `transcript_hash` below), so a
+            # copy under another name is the same request and an in-place edit is not.
+            value = "supplied" if value else ""
         if isinstance(value, dict):
             value = {str(k): str(v) for k, v in sorted(value.items())}
         elif isinstance(value, list):
             value = [str(item) for item in value]
         payload[name] = value
     payload["source_fingerprint"] = source_fingerprint
+    payload["transcript_hash"] = transcript_hash or _transcript_hash(settings)
     blob = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _transcript_hash(settings: Settings) -> str:
+    """Hash a supplied transcript's bytes. A missing file hashes to a marker, not a crash."""
+    path = getattr(settings, "transcript", "") or ""
+    if not path:
+        return ""
+    try:
+        return file_content_hash(path)
+    except OSError:
+        return "missing"
 
 
 def request_snapshot(settings: Settings) -> dict:
@@ -166,18 +193,52 @@ def request_snapshot(settings: Settings) -> dict:
     return snapshot
 
 
-def source_fingerprint(path: str | Path) -> str:
-    """A cheap identity for the source: size + mtime, not a content hash.
+_SOURCE_HASHES: dict[str, str] = {}
 
-    The transcript cache hashes content because it must be exact. A job id is computed on
-    every submit, so it uses metadata and says so: renaming a file keeps its job, and
-    editing one invalidates it, which is the behaviour a user expects.
+
+def source_fingerprint(path: str | Path, use_cache: bool = True) -> str:
+    """Identity of the source *content*: streamed SHA-256 plus the size as support.
+
+    This used to be `size:mtime_ns`, which meant two different videos of the same size with
+    the same timestamp were the same job — a real collision, not a theoretical one, because
+    a copy preserves the timestamp and a re-encode can preserve the size.
+
+    Cost is the reason it was metadata-only: hashing a 2 GB file reads 2 GB. So the hash is
+    memoised on `(path, size, mtime_ns)` for the life of the process — a submit hashes once,
+    and every later call in the same run (retry, plan, job id) is free. Across processes it
+    is one read of the file per job, which is the price of not confusing two videos.
+
+    A rename or a move keeps the same identity, because the path is not part of it: the
+    documented policy is that content is the identity.
     """
+    target = Path(path)
     try:
-        stat = Path(path).stat()
+        stat = target.stat()
     except OSError as exc:
         raise JobError(f"cannot fingerprint the source {path}: {exc}") from exc
-    return f"{stat.st_size}:{stat.st_mtime_ns}"
+    key = f"{target.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+    if use_cache and key in _SOURCE_HASHES:
+        return _SOURCE_HASHES[key]
+
+    digest = hashlib.sha256()
+    try:
+        with open(target, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError as exc:
+        raise JobError(f"cannot read the source {path}: {exc}") from exc
+    value = f"{digest.hexdigest()}:{stat.st_size}"
+    _SOURCE_HASHES[key] = value
+    return value
+
+
+def file_content_hash(path: str | Path) -> str:
+    """SHA-256 of a small file's bytes (a transcript), independent of its path."""
+    digest = hashlib.sha256()
+    with open(Path(path), "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def new_job_id(source: str | Path, fingerprint: str = "") -> str:
@@ -210,6 +271,7 @@ class Job:
     transcript_json: str = ""
     subtitles: dict = field(default_factory=dict)
     report: str = ""
+    review: str = ""
     qc_ok: bool | None = None
     qc: dict = field(default_factory=dict)
     error: str = ""
@@ -222,7 +284,7 @@ class Job:
     pid: int | None = None
     host: str = field(default_factory=socket.gethostname)
     workdir: str = ""
-    fingerprint: str = ""
+    fingerprint: str = ""  # the source content fingerprint
     request_fingerprint: str = ""
     request: dict = field(default_factory=dict)
     claim: dict = field(default_factory=dict)
@@ -267,11 +329,13 @@ class Job:
             "qc_failed": self.qc_failed,
             "failures": self.qc.get("failures", []) if isinstance(self.qc, dict) else [],
             "output": self.output,
+            "review": self.review,
             "error": self.error,
             "error_kind": self.error_kind,
             "attempts": self.attempts,
             "provider_retries": self.provider_retries,
             "request_fingerprint": self.request_fingerprint,
+            "source_fingerprint": self.fingerprint,
         }
 
     def to_dict(self) -> dict:
@@ -325,8 +389,9 @@ class JobStore:
     def create(self, source: str | Path, settings: Settings, **extra) -> Job:
         """Create a job for this source *and request*, or return the one already known."""
         source = str(Path(source).expanduser().resolve())
+        source_hash = extra.pop("source_fingerprint", None) or source_fingerprint(source)
         fingerprint = extra.pop("request_fingerprint", None) or request_fingerprint(
-            settings, source_fingerprint(source)
+            settings, source_hash
         )
         job_id = new_job_id(source, fingerprint)
         with self._lock:
@@ -354,6 +419,7 @@ class JobStore:
                 "lipsync": settings.lipsync,
             },
             workdir=str(Path(settings.workdir).resolve()),
+            fingerprint=source_hash,
             request_fingerprint=fingerprint,
             request=request_snapshot(settings),
             **extra,
@@ -664,6 +730,7 @@ class JobStore:
         job.transcript_json = ""
         job.subtitles = {}
         job.report = ""
+        job.review = ""
         job.warnings = []
         job.providers_used = {}
         job.attempts += 1
@@ -942,6 +1009,7 @@ class JobRunner:
                 transcript_json=result.transcript_json,
                 subtitles=result.subtitles,
                 report=result.report,
+                review=result.review,
                 qc_ok=bool(result.ok),
                 qc={
                     "ok": result.ok,
