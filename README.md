@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-371%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-409%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-21%20tools-6f42c1)](src/dubforge/server.py)
@@ -349,7 +349,7 @@ src/dubforge/
   fit.py           the timing model — chars/second per language, verdicts, budgets
   timeline.py      words → sentences → speaker labels → per-line windows → voices
   media.py         Word / Segment / Transcript, JSON round-trip, cache fingerprint
-  qc.py            the fifteen checks, the metrics, the one-screen summary
+  qc.py            the twenty-one checks, the metrics, the one-screen summary
   srt.py           source / target / bilingual SRT and WebVTT
   config.py        Settings: flags, JSON file, environment; never prints a secret
   doctor.py        what this machine can and cannot do, with the fix for each gap

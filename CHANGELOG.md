@@ -101,6 +101,16 @@ dub audio and picture both present, one audio stream), `video_codec_preserved` (
 job and attempt identifiers, provider names, error kinds — and no key, header or transcript
 ever. Off by default; an unwritable log never breaks the run.
 
+### Added — documentation integrity
+
+* `tests/test_docs_integrity.py` checks the hand-written docs the way
+  `test_reference_docs.py` checks the generated ones: every relative link resolves, the
+  version agrees across `pyproject.toml`/`__init__.py`/`CITATION.cff`, the changelog has an
+  entry for the current version, `SKILL.md` lists exactly the reference files that exist,
+  every page in `docs/` is linked from the README, no doc names an MCP tool that does not
+  exist (unless it is explaining the absence), and the QC check count in the README matches
+  the number the pipeline actually produces.
+
 ### Added — skill
 
 Four references for agents: `jobs.md` (identity, claims, attempts, heartbeat), `batch.md`
@@ -115,7 +125,7 @@ money".
 
 ### Tests
 
-316 → 371. New: heartbeat and recovery (8), identity (7), claims including a real
+316 → 409. New: heartbeat and recovery (8), identity (7), claims including a real
 subprocess (7), attempts and transitions (7), runner behaviour (4), retry safety (8), batch
 collisions and scale (10), events (3), QC additions (3).
 

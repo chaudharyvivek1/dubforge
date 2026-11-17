@@ -33,7 +33,7 @@ CLI (cli.py)            MCP server (server.py)         Library (__init__.py)
 | `fit.py` | characters-per-second model, per-line windows, rewrite budget | the dubbing-specific maths |
 | `timeline.py` | words → sentences → speakers → windows → voice map | deterministic, fully unit-tested |
 | `media.py` | `Word` / `Segment` / `Transcript`, JSON round-trip, content hash | the data model everything shares |
-| `qc.py` | fifteen checks, metrics, one-screen summary | `fail` exits non-zero |
+| `qc.py` | twenty-one checks, metrics, one-screen summary | `fail` exits non-zero |
 | `srt.py` | source / target / bilingual SRT, VTT, SRT import | review artefacts |
 | `workspace.py` | job directories, locks, manifest, shared cache, safe cleanup | added in 0.1.1 |
 | `config.py` | `Settings`, environment and JSON file parsing, validation | added strict booleans and file validation in 0.1.2 |

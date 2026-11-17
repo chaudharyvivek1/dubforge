@@ -81,7 +81,7 @@ the four skill references, `docs/architecture.md`, `docs/security.md`, `docs/ass
 `docs/release-0.2.1.md`, README, CHANGELOG, ROADMAP, and the regenerated
 `docs/{configuration,mcp-tools,cli}.md`.
 
-## 5. New tests (55 added, 371 total)
+## 5. New tests (92 added, 409 total)
 
 Heartbeat: live pid with a stale heartbeat stays `processing`; fresh heartbeat where pids
 cannot be probed; stale heartbeat where pids cannot be probed; dead pid with a fresh
@@ -103,12 +103,12 @@ unwritable log does not break the run.
 ## 6. Actual execution (local, this machine)
 
 ```
-263 passed  (fast group: jobs, reliability, retry, config, cache, workspace, providers,
-             security, fit, timeline, srt, reference docs)
- 28 passed  (pipeline)
+301 passed  (fast group: jobs, reliability, retry, config, cache, workspace, providers,
+             security, fit, timeline, srt, reference docs, docs integrity)
+ 28 passed  (pipeline, run in three parts to stay inside a 300 s step)
  43 passed  (server, limits/batch/capabilities)
  37 passed  (concurrency, demo gate, CLI)
-371 total
+409 total (37 of them documentation integrity)
 ruff check  — clean      ruff format --check — clean
 python scripts/gen_reference.py --check — current
 python -m dubforge doctor — ok
