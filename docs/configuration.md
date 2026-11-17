@@ -71,6 +71,12 @@ starting any work.
 | `max_retries` | `DUBFORGE_MAX_RETRIES` | `int` | `2` | 0 – 10 |
 | `job_retention_days` | `DUBFORGE_JOB_RETENTION_DAYS` | `int` | `30` | 1 – 3650 |
 | `fallback` | `DUBFORGE_FALLBACK` | `bool` | `False` | — |
+| `job_heartbeat_stale_s` | `DUBFORGE_JOB_HEARTBEAT_STALE_S` | `float` | `180.0` | 10 – 7200 |
+| `job_heartbeat_interval_s` | `DUBFORGE_JOB_HEARTBEAT_INTERVAL_S` | `float` | `15.0` | 1 – 600 |
+| `qc_max_chars_per_line` | `DUBFORGE_QC_MAX_CHARS_PER_LINE` | `int` | `42` | 10 – 120 |
+| `qc_max_lines` | `DUBFORGE_QC_MAX_LINES` | `int` | `2` | 1 – 4 |
+| `qc_max_reading_cps` | `DUBFORGE_QC_MAX_READING_CPS` | `float` | `20.0` | 5 – 60 |
+| `qc_min_display_s` | `DUBFORGE_QC_MIN_DISPLAY_S` | `float` | `0.8` | 0.2 – 10 |
 
 ## Limits
 

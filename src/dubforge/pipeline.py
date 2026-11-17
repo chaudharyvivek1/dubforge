@@ -24,10 +24,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import ffmpeg, fit, qc, srt, timeline
+from . import events, ffmpeg, fit, qc, srt, timeline
 from . import limits as limits_mod
 from .config import Settings
 from .media import Segment, Transcript, file_fingerprint
+from .providers import http as provider_http
 from .providers import registry
 from .providers.base import ProviderError, ProviderUnavailable
 from .workspace import WorkspaceError, atomic_write_text, open_job, unlink_retry
@@ -114,6 +115,7 @@ class DubResult:
     audio: str = ""
     workdir: str = ""
     providers_used: dict = field(default_factory=dict)
+    retries: list = field(default_factory=list)
     transcript_json: str = ""
     subtitles: dict = field(default_factory=dict)
     qc: dict = field(default_factory=dict)
@@ -134,6 +136,7 @@ class DubResult:
             "workdir": self.workdir,
             "transcript_json": self.transcript_json,
             "providers_used": self.providers_used,
+            "retries": self.retries,
             "subtitles": self.subtitles,
             "qc": self.qc,
             "plan": self.plan,
@@ -419,6 +422,12 @@ def _write_report(
     ]
     for step in result.steps:
         lines.append(f"| {step.name} | {step.seconds:.1f} | {step.detail.replace('|', '/')} |")
+    if result.retries:
+        lines += ["", "## Provider retries", ""]
+        for retry in result.retries:
+            lines.append(
+                f"* {retry.get('provider')} — attempt {retry.get('attempt')}: {retry.get('reason')}"
+            )
     if result.warnings:
         lines += ["", "## Warnings", ""] + [f"* {w}" for w in result.warnings]
     lines += [
@@ -463,6 +472,11 @@ def dub(
     source = str(source)
     started_wall = time.time()
     providers_used: dict[str, str] = {}
+    retries: list[dict] = []
+    # Every provider retry lands here, so a job can report "this run retried twice"
+    # without any adapter growing a return value for it. No secrets: provider, reason,
+    # attempt number only.
+    provider_http.watch_retries(retries)
 
     def check_cancel() -> None:
         if cancel is not None and cancel():
@@ -563,6 +577,13 @@ def dub(
                     f"falling back to {nxt.name} — different quality and cost"
                 )
                 result.warnings.append(message)
+                events.emit(
+                    events.PROVIDER_FALLBACK,
+                    stage=kind,
+                    from_provider=provider.name,
+                    to_provider=nxt.name,
+                    reason=exc.kind,
+                )
                 say(f"· {message}")
                 continue
             providers_used[kind] = provider.name
@@ -867,6 +888,12 @@ def dub(
         suffix = ".mp4" if info.has_video else ".m4a"
         output = str(Path(source).with_name(f"{stem}.{settings.target_lang}{suffix}"))
     output = str(output)
+    # An explicit --out may point into a folder that does not exist yet; creating it here
+    # turns "ffmpeg failed (254)" into a working run.
+    try:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise DubError(f"cannot create the output folder {Path(output).parent}: {exc}") from exc
     if info.has_video:
         step(
             "mux video + dub",
@@ -895,6 +922,22 @@ def dub(
             result.warnings.append(f"lip sync skipped: {exc}")
 
     # 11 — deliverables --------------------------------------------------------
+    # Record what ran and what was retried *before* the report is written, so the report
+    # and the job document say the same thing.
+    result.providers_used = dict(providers_used)
+    result.retries = list(retries)
+    if retries:
+        for retry in retries:
+            events.emit(
+                events.PROVIDER_RETRY,
+                provider=retry.get("provider"),
+                reason=retry.get("reason"),
+                attempt=retry.get("attempt"),
+            )
+        result.warnings.append(
+            f"{len(retries)} provider retr{'y' if len(retries) == 1 else 'ies'} "
+            f"(rate limits or server errors; no request was retried after an ambiguous timeout)"
+        )
     result.output = output
     result.audio = str(Path(work) / "dub_norm.wav")
     result.transcript_json = transcript.save(work / "transcript.dub.json")
@@ -910,12 +953,16 @@ def dub(
         loudness_target=settings.loudness_lufs,
         bed_used=bed_used,
         source_info=info,
+        max_chars_per_line=settings.qc_max_chars_per_line,
+        max_lines=settings.qc_max_lines,
+        max_reading_cps=settings.qc_max_reading_cps,
+        min_display_s=settings.qc_min_display_s,
     )
     qc.save(result.qc, work / "qc.json")
     result.report = _write_report(result, plan_obj, settings, transcript)
-    result.providers_used = dict(providers_used)
     job.finished(
         providers_used=result.providers_used,
+        provider_retries=len(retries),
         output=output,
         qc_ok=result.qc.get("ok"),
         failures=result.qc.get("failures", []),

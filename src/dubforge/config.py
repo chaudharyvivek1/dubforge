@@ -37,6 +37,12 @@ NUMERIC_RANGES: dict[str, tuple[float, float]] = {
     "max_concurrent_jobs": (1, 16),
     "max_retries": (0, 10),
     "job_retention_days": (1, 3650),
+    "job_heartbeat_stale_s": (10.0, 7200.0),
+    "job_heartbeat_interval_s": (1.0, 600.0),
+    "qc_max_chars_per_line": (10, 120),
+    "qc_max_lines": (1, 4),
+    "qc_max_reading_cps": (5.0, 60.0),
+    "qc_min_display_s": (0.2, 10.0),
 }
 
 
@@ -130,6 +136,18 @@ class Settings:
 
     # --- provider reliability -------------------------------------------------
     fallback: bool = False  # opt-in: try the next provider on failure
+
+    # --- job liveness ---------------------------------------------------------
+    # How long a worker may go without a heartbeat before another process may call the
+    # job interrupted. Generous on purpose: a provider call can legitimately take minutes.
+    job_heartbeat_stale_s: float = 180.0
+    job_heartbeat_interval_s: float = 15.0
+
+    # --- subtitle readability (QC) --------------------------------------------
+    qc_max_chars_per_line: int = 42
+    qc_max_lines: int = 2
+    qc_max_reading_cps: float = 20.0
+    qc_min_display_s: float = 0.8
 
     # --- diagnostics (filled by from_env; never set by hand) -------------------
     env_warnings: list[str] = field(default_factory=list)

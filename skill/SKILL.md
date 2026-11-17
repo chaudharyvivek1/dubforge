@@ -1,6 +1,6 @@
 ---
 name: dubforge
-description: Dub a video or audio file into another language with a quality-controlled pipeline. Use when the user asks to dub, translate, re-voice or localise a video or podcast, to add a Hindi/Tamil/Spanish/etc. audio track, to transcribe with speakers and timings, to produce translated or bilingual subtitles, or to check why a dub sounds rushed, out of sync or missing its music. Routes recognition, translation, voice, stem separation and lip sync to swappable providers, then reports QC.
+description: Dub a video or audio file into another language with a quality-controlled pipeline. Use when the user asks to dub, translate, re-voice or localise a video or podcast, to add a Hindi/Tamil/Spanish/etc. audio track, to batch-dub a folder of lessons, to transcribe with speakers and timings, to produce translated or bilingual subtitles, to check on or cancel a long-running dub job, or to check why a dub sounds rushed, out of sync, missing its music, or cost more than expected. Routes recognition, translation, voice, stem separation and lip sync to swappable providers, runs long work as inspectable jobs, and reports QC.
 ---
 
 # dubforge
@@ -17,6 +17,10 @@ Never report "your video has been dubbed" on the strength of an exit code.
 
 Second rule: **never paste a transcript into the conversation.** It is a file. Pass
 the path, quote at most five lines.
+
+Third rule: **a retry can cost money.** A non-idempotent request that timed out may already
+have been billed. Never re-run a synthesis, a translation or a transcription after an
+`ambiguous` failure without saying so out loud.
 
 ## Workflow
 
@@ -90,7 +94,35 @@ dubforge_get_job_result → {"output": "...", "qc": {...}, "providers_used": {..
   `dubforge_retry_job`, within the configured retry budget.
 * `dubforge_list_jobs` is paginated and newest-first; pass `status` to filter.
 
-### 5a. Know the limits before you queue
+### 5a. One source, many languages
+
+A job id is the *request*, not the file: `<stem>-<pathhash>-<requesthash>`, where the
+request hash covers target language, providers, models, voices, glossary, context, timing
+and mix settings. So:
+
+* `dubforge_submit_job` for the same video into Hindi and into Tamil returns **two** jobs
+  and they run independently;
+* submitting the identical request twice returns the job already running (check the
+  `duplicate` flag rather than assuming a new run started);
+* a retry (`dubforge_retry_job`) re-runs the **original** request, not whatever the
+  current settings are — so never "fix" a job by retrying it after changing defaults.
+
+### 5b. Batch a folder, not a loop of calls
+
+For more than a couple of files use `dubforge batch <folder> --to hi` (CLI) rather than
+calling the tool in a loop: it isolates failures, writes outputs outside the input folder,
+never overwrites a previous QC-passing result, and keeps the relative folder structure so
+`class-a/lesson.mp4` and `class-b/lesson.mp4` cannot collide. Read `references/batch.md`.
+
+### 5c. Cost safety when a provider is slow or failing
+
+A timeout on a non-idempotent call (synthesis, translation, transcription) is **not**
+retried by default: the vendor may have accepted and billed it. The error is
+`provider_error` with kind `ambiguous`, and re-running that line may cost twice. Only
+`rate_limit`, `server` and `timeout` *answers* are retried automatically, and only where
+the vendor documents an idempotency key. Tell the user this instead of retrying blindly.
+
+### 5d. Know the limits before you queue
 `dubforge_get_capabilities` answers what this install can do; `dubforge_estimate_cost`
 answers what a run would cost at list prices and whether the configured limits allow it.
 Limits are refusals, not warnings: input size, input duration, wall-clock run time,
@@ -122,10 +154,18 @@ If `qc.ok` is false:
 | `every_line_has_audio` | synthesis failed for some lines | read `warnings`; usually a key, a voice id or a rate limit |
 | `no_empty_lines` | the translator returned nothing for a line | re-run; if it persists, that line's source may be music-only |
 
-Job-level states worth knowing: `interrupted` means the process running the job died — it
-is never a completed dub; `failed` carries `error_kind` (`auth`, `rate_limit`, `timeout`,
-`network`, `bad_request`, `not_found`, `server`), which tells you whether a retry is worth
-it. `rate_limit` and `timeout` are; `auth` and `bad_request` are not.
+Job-level states worth knowing:
+
+| state | meaning | what to do |
+|---|---|---|
+| `interrupted` | the process running the job died (dead pid, or no heartbeat) | never report as a dub; `dubforge_retry_job` re-queues the same request |
+| `failed` | an error was raised; `error_kind` says which | retry `rate_limit`/`timeout`/`server`; fix `auth`/`bad_request`/`ambiguous` |
+| `completed` + `qc_ok: false` | the run finished, the dub failed QC | report `failures`; do not present the file as ready |
+| `cancelled` | a caller asked it to stop | the artefacts of that attempt are not a result |
+
+`error_kind: ambiguous` means a non-idempotent request timed out and may have been billed.
+Do not retry it automatically; check the provider dashboard or re-run that one line
+deliberately.
 
 Warnings (loudness, headroom, duration, background) do not block delivery but must be
 mentioned: "the music bed could not be separated on this mono source, so the original
@@ -151,5 +191,7 @@ Offer a re-run with changes rather than claiming perfection.
 * `references/providers.md` — every adapter, when to pick it, what it costs, its gotchas.
 * `references/quality.md` — the timing model, the QC checks, the tuning table.
 * `references/prompts.md` — briefs and glossary patterns that measurably improve output.
-* `references/jobs.md` — the job tools, the lifecycle, cancellation and cleanup.
+* `references/jobs.md` — the job tools: identity, claims, attempts, heartbeat, cancellation.
+* `references/batch.md` — folders, collisions, resume, a school or studio workflow.
+* `references/reliability.md` — retries, idempotency, provider health, fallback, events.
 * `references/troubleshooting.md` — error messages and what they actually mean.

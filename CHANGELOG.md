@@ -2,6 +2,118 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.2.1] — 2026-11-18
+
+A reliability release. Same product, harder to break and harder to overpay: no public name,
+CLI command or MCP tool changed.
+
+### Fixed — job liveness (P0)
+
+* **A live job was reported `interrupted` while its provider call was still running.** The
+  recovery check treated a stale heartbeat as death, so a four-minute synthesis could be
+  killed by a status request. Recovery now prefers the pid where a pid means something
+  (POSIX) and only falls back to the heartbeat where it does not (Windows, another host).
+  Workers also refresh the heartbeat on a timer, not only between stages.
+* **A queued job with no claim was read as dead.** An unclaimed job is waiting, not lost.
+* **Clock skew** between hosts no longer looks like death: a heartbeat from the future
+  counts as fresh.
+
+### Fixed — job identity (P0)
+
+* **One source could only have one job.** The id was `<stem>-<pathhash>`, so Hindi and Tamil
+  for the same video collided and the second submit returned the first job. The id is now
+  `<stem>-<pathhash>-<requesthash>`, where the request hash covers everything that changes
+  the result — languages, providers, models, voices, glossary, context, style, emotion, mix
+  and timing settings — and deliberately excludes `workdir`, `cache` and logging.
+* Identical requests still deduplicate (`duplicate: true`), and different provider
+  configurations can never inherit each other's output.
+* Two-part ids from 0.2.0 still load and are marked `legacy_id`.
+
+### Fixed — ownership (P0)
+
+* **Two runners, or two processes, could run the same request.** Ownership was an in-memory
+  set. It is now a claim file created with `O_EXCL` holding a token, pid, host and start
+  time: one winner, no check-then-write race. `update(token=…)` refuses a worker that lost
+  the claim, `heartbeat()` and `release()` are owner-only, a dead claim is reclaimed and a
+  live one is never stolen. Verified with a real `multiprocessing` child process.
+
+### Fixed — batch outputs (P0)
+
+* **Two folders with the same filename wrote to one output.** `class-a/lesson.mp4` and
+  `class-b/lesson.mp4` produced `out/lesson.hi.mp4` twice. Outputs now preserve the relative
+  folder structure, and a genuine collision appends a deterministic 6-character hash of the
+  resolved source path — so re-running a batch lands on the same names instead of
+  accumulating copies.
+* An existing output is never replaced; the source is never an output; symlinked duplicates
+  are dubbed once; files inside the work directory are never inputs.
+* **Output discovery no longer stops at 200 jobs**, which could have let a large batch
+  re-dub its own results.
+
+### Fixed — retries and money (P1)
+
+* **A non-idempotent POST could be retried after a timeout**, which is how one line becomes
+  two charges. Retries are now operation-aware: a 429/5xx *answer* is retried (nothing was
+  billed), a network failure is retried only when the call is idempotent or carries a
+  vendor-documented idempotency key — otherwise it raises `kind="ambiguous"` and says the
+  request may have been accepted and billed.
+* OpenAI calls pass its documented `Idempotency-Key`. No header is invented for any other
+  provider, and no call is marked idempotent on a guess.
+* Retries are counted: `provider_retries` in the job, a warning in the run, a section in
+  `report.md`, and a `provider.retry` event.
+
+### Fixed — lifecycle and results (P1)
+
+* **Illegal transitions are refused.** `TRANSITIONS` is enforced by the store, so a terminal
+  job cannot quietly become active again; the only way back is `retry`.
+* **A retry no longer shows the previous attempt's results.** `output`, `audio`,
+  `subtitles`, `qc`, `warnings` and `providers_used` are cleared, `attempts` increments and
+  `attempt_history` records the attempt (bounded to 50 entries).
+* **A retry re-runs the original request**, from the snapshot stored with the job, not the
+  current settings.
+* `qc_failed` distinguishes "finished and failed QC" from "succeeded" without inferring it
+  from two fields.
+
+### Fixed — output and files (P1)
+
+* An explicit `--out` into a folder that does not exist now creates it, instead of failing at
+  the mux after the whole run was paid for.
+* Cleanup still refuses anything outside `<workdir>/jobs/`, and now also removes the claim
+  file.
+
+### Added — QC (15 → 21 checks)
+
+`subtitle_timing` (fail: invalid durations, overlaps), `subtitle_readability` (warn: line
+length, reading speed, minimum display time — all configurable), `streams_present` (fail:
+dub audio and picture both present, one audio stream), `video_codec_preserved` (warn),
+`audio_layout` (warn: sample rate and channel count), `not_mostly_silent` (warn: more than
+75% silence in the dub track).
+
+### Added — observability
+
+`DUBFORGE_EVENTS=<file>` writes append-only JSONL: `job.created`, `job.claimed`,
+`job.stage`, `job.completed`, `job.failed`, `job.cancelled`, `job.retry`, `job.recovered`,
+`provider.retry`, `provider.fallback`, `qc.result`, `cleanup`. Stable names, timestamps,
+job and attempt identifiers, provider names, error kinds — and no key, header or transcript
+ever. Off by default; an unwritable log never breaks the run.
+
+### Added — skill
+
+Four references for agents: `jobs.md` (identity, claims, attempts, heartbeat), `batch.md`
+(collisions, resume, a school/studio workflow), `reliability.md` (retries, idempotency,
+health, fallback, events), plus an updated `SKILL.md` whose third rule is "a retry can cost
+money".
+
+### New settings
+
+`job_heartbeat_stale_s` (180), `job_heartbeat_interval_s` (15), `qc_max_chars_per_line` (42),
+`qc_max_lines` (2), `qc_max_reading_cps` (20), `qc_min_display_s` (0.8).
+
+### Tests
+
+316 → 371. New: heartbeat and recovery (8), identity (7), claims including a real
+subprocess (7), attempts and transitions (7), runner behaviour (4), retry safety (8), batch
+collisions and scale (10), events (3), QC additions (3).
+
 ## [0.2.0] — 2026-11-17
 
 The job engine release. An agent can now submit work, watch it, cancel it, retry it and

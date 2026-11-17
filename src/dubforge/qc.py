@@ -16,6 +16,7 @@ run also writes a bilingual SRT.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -43,6 +44,10 @@ def report(
     loudness_target: float = -16.0,
     bed_used: bool = False,
     source_info=None,
+    max_chars_per_line: int = 42,
+    max_lines: int = 2,
+    max_reading_cps: float = 20.0,
+    min_display_s: float = 0.8,
 ) -> dict:
     checks: list[dict] = []
     rendered = [s for s in segments if s.rendered_duration]
@@ -199,6 +204,21 @@ def report(
                     severity="warn",
                 )
             )
+        with contextlib.suppress(ffmpeg.FFmpegError, OSError):
+            spans = ffmpeg.silence_spans(probe_target, noise_db=-45, min_duration=0.5)
+            silent = sum(end - start for start, end in spans)
+            ratio = silent / dub_seconds if dub_seconds else 0.0
+            metrics["silence_ratio"] = round(ratio, 3)
+            checks.append(
+                _check(
+                    "not_mostly_silent",
+                    ratio <= 0.75,
+                    f"{ratio:.0%} of the dub track is silence"
+                    if ratio <= 0.75
+                    else f"{ratio:.0%} of the dub track is silence — lines may be missing",
+                    severity="warn",
+                )
+            )
         loud = ffmpeg.measure_loudness(probe_target)
         if loud:
             metrics.update(loud)
@@ -261,6 +281,98 @@ def report(
                 severity="warn",
             )
         )
+
+    # --- subtitles: measurable, and separate from audio timing -----------------
+    bad_timing = [seg.index for seg in segments if seg.end <= seg.start or seg.duration <= 0]
+    overlaps = []
+    ordered = sorted(segments, key=lambda s: s.start)
+    for first, second in zip(ordered, ordered[1:], strict=False):
+        if second.start < first.end - 0.05:
+            overlaps.append((first.index, second.index))
+    checks.append(
+        _check(
+            "subtitle_timing",
+            not bad_timing and not overlaps,
+            "every subtitle has a positive duration and no overlap"
+            if not bad_timing and not overlaps
+            else f"{len(bad_timing)} segment(s) with invalid timing {bad_timing[:5]}, "
+            f"{len(overlaps)} overlap(s) {overlaps[:5]}",
+        )
+    )
+
+    unreadable = []
+    for seg in segments:
+        text = seg.speech.strip()
+        if not text:
+            continue
+        lines = [line for line in text.splitlines() if line.strip()] or [text]
+        longest = max(len(line) for line in lines)
+        cps = len(text) / seg.duration if seg.duration > 0 else 999.0
+        if longest > max_chars_per_line or len(lines) > max_lines or cps > max_reading_cps:
+            unreadable.append(seg.index)
+    short_display = [
+        seg.index for seg in segments if seg.duration < min_display_s and seg.speech.strip()
+    ]
+    checks.append(
+        _check(
+            "subtitle_readability",
+            not unreadable and not short_display,
+            f"lines fit {max_chars_per_line} characters, {max_reading_cps:g} characters/second, "
+            f"and stay on screen for at least {min_display_s:g}s"
+            if not unreadable and not short_display
+            else f"{len(unreadable)} line(s) too long or too fast {unreadable[:5]}, "
+            f"{len(short_display)} shown for under {min_display_s:g}s {short_display[:5]}",
+            severity="warn",
+        )
+    )
+
+    # --- the container: the right streams, unchanged video, expected layout ----
+    if original and output and Path(output).exists():
+        try:
+            before = ffmpeg.probe(original)
+            after = ffmpeg.probe(output)
+            stream_problems = []
+            if not after.has_audio:
+                stream_problems.append("no audio stream in the output")
+            if before.has_video and not after.has_video:
+                stream_problems.append("the video stream disappeared")
+            if after.audio_streams > 1:
+                stream_problems.append(
+                    f"{after.audio_streams} audio streams in the output (expected 1)"
+                )
+            checks.append(
+                _check(
+                    "streams_present",
+                    not stream_problems,
+                    "dub audio and the original picture are both present"
+                    if not stream_problems
+                    else "; ".join(stream_problems),
+                )
+            )
+            codec_ok = (not before.has_video) or before.video_codec == after.video_codec
+            checks.append(
+                _check(
+                    "video_codec_preserved",
+                    codec_ok,
+                    f"{after.video_codec} (copied from the source)"
+                    if codec_ok
+                    else f"video codec changed: {before.video_codec} → {after.video_codec}",
+                    severity="warn",
+                )
+            )
+            layout_ok = after.channels in (1, 2) and after.sample_rate >= 44100
+            checks.append(
+                _check(
+                    "audio_layout",
+                    layout_ok,
+                    f"{after.sample_rate} Hz, {after.channels} channel(s)"
+                    if layout_ok
+                    else f"unexpected audio layout: {after.sample_rate} Hz, {after.channels} channel(s)",
+                    severity="warn",
+                )
+            )
+        except ffmpeg.FFmpegError as exc:
+            metrics["stream_probe_error"] = str(exc)[:200]
 
     checks.append(
         _check(

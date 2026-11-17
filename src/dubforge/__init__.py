@@ -15,10 +15,16 @@ Public surface:
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from .config import Settings  # noqa: E402
-from .jobs import Job, JobError, JobRunner, JobStore  # noqa: E402
+from .jobs import (  # noqa: E402
+    Job,
+    JobError,
+    JobRunner,
+    JobStore,
+    request_fingerprint,
+)
 from .pipeline import DubCancelled, DubError, DubPlan, DubResult, dub, plan  # noqa: E402
 
 __all__ = [
@@ -33,5 +39,6 @@ __all__ = [
     "JobError",
     "JobRunner",
     "JobStore",
+    "request_fingerprint",
     "__version__",
 ]

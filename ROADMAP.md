@@ -5,10 +5,12 @@ dependency and licence assessment, security risk assessment, and the phased plan
 sizes — is in [docs/assessment.md](docs/assessment.md). Ordered by what most improves a real dub, not by
 what is most fun to build.
 
-## Now — the honest state of 0.2.0
+## Now — the honest state of 0.2.1
 
-* The pipeline is complete and the offline path is fully tested (316 tests, real ffmpeg,
+* The pipeline is complete and the offline path is fully tested (371 tests, real ffmpeg,
   a real mp4 at the end of `dubforge demo`).
+* Jobs are request-addressed, single-owner, heartbeat-monitored and recoverable; retries
+  cannot silently bill twice; batch outputs cannot collide; QC has 21 measurable checks.
 * Jobs, background execution, cooperative cancellation, capabilities, limits, batch
   processing, provider health and opt-in fallback all shipped in 0.2.0.
 * 24 adapters exist; the network ones are written against vendor documentation and are

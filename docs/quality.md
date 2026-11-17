@@ -127,6 +127,12 @@ nothing in the body.
 | `duration_preserved` | warn | output within 0.5 s of input |
 | `frame_rate_preserved` | warn | the copied video stream kept its fps |
 | `multiple_audio_tracks` | warn | the source had one audio track (extra tracks are dropped) |
+| `subtitle_timing` | fail | every subtitle has a positive duration and consecutive cues do not overlap |
+| `subtitle_readability` | warn | lines fit `qc_max_chars_per_line` (42), at most `qc_max_lines` (2), under `qc_max_reading_cps` (20) and on screen for `qc_min_display_s` (0.8) |
+| `streams_present` | fail | the output has the dubbed audio and, if the source had one, a video stream — and exactly one audio stream |
+| `video_codec_preserved` | warn | the picture was streamed through, not re-encoded |
+| `audio_layout` | warn | the dub is at least 44.1 kHz with one or two channels |
+| `not_mostly_silent` | warn | less than 75% of the dub track is silence, which is how a missing line shows up |
 | `background_kept` | warn | a bed was mixed under the dub |
 
 `fail` means *do not ship*. `warn` means *listen to this one*. A run that ends with

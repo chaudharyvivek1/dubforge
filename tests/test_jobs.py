@@ -31,6 +31,14 @@ def settings(tmp_path) -> Settings:
     return Settings(target_lang="hi", workdir=str(tmp_path / "work"))
 
 
+def _finish(store: JobStore, job: Job, status: str = COMPLETED, **fields) -> Job:
+    """Walk the legal path to a terminal state; the store refuses shortcuts now."""
+    if job.status == QUEUED:
+        job = store.update(job.id, status=PROCESSING, stage=PROCESSING, pid=os.getpid())
+    fields.setdefault("finished_at", time.time())
+    return store.update(job.id, status=status, **fields)
+
+
 def _mark_crashed(store: JobStore, job: Job) -> None:
     """Make a job look like it was left behind by a process that died.
 
@@ -38,23 +46,16 @@ def _mark_crashed(store: JobStore, job: Job) -> None:
     probe safely, so the mechanism there is a stale heartbeat — the documented
     platform difference, exercised rather than papered over.
     """
-    if os.name == "nt":
-        store.update(
-            job.id,
-            status=PROCESSING,
-            stage="synthesise",
-            pid=os.getpid(),
-            heartbeat_at=time.time() - 600,
-            started_at=time.time() - 30,
-        )
-    else:
-        store.update(
-            job.id,
-            status=PROCESSING,
-            stage="synthesise",
-            pid=999_999_999,
-            started_at=time.time() - 30,
-        )
+    # Both signals at once: a dead pid catches it on POSIX, a stale heartbeat catches it
+    # where pids cannot be probed. One code path, correct on every platform.
+    store.update(
+        job.id,
+        status=PROCESSING,
+        stage="synthesise",
+        pid=999_999_999,
+        heartbeat_at=time.time() - 600,
+        started_at=time.time() - 30,
+    )
 
 
 def _source(tmp_path, name="lesson.mp4", data=b"x"):
@@ -102,7 +103,7 @@ def test_full_lifecycle_transitions(store, settings, tmp_path):
         job = store.update(job.id, status=status, stage=status)
         assert store.get(job.id).status == status
 
-    job = store.update(job.id, status=COMPLETED, qc_ok=True, finished_at=time.time())
+    job = _finish(store, job, qc_ok=True)
     stored = store.get(job.id)
     assert stored.status == COMPLETED
     assert stored.terminal is True
@@ -188,7 +189,7 @@ def test_cancel_asks_a_running_job_politely(store, settings, tmp_path):
 def test_cancel_is_idempotent_on_a_finished_job(store, settings, tmp_path):
     source = _source(tmp_path)
     job = store.create(source, settings)
-    store.update(job.id, status=COMPLETED, qc_ok=True)
+    _finish(store, job, qc_ok=True)
     again = store.request_cancel(job.id)
     assert again.status == COMPLETED
 
@@ -242,7 +243,7 @@ def test_list_is_newest_first_and_paginates(store, settings, tmp_path):
 
 def test_list_filters_by_status(store, settings, tmp_path):
     done = store.create(_source(tmp_path, "a.mp4"), settings)
-    store.update(done.id, status=COMPLETED, qc_ok=True)
+    _finish(store, done, qc_ok=True)
     store.create(_source(tmp_path, "b.mp4"), settings)
     completed, total = store.list(status=COMPLETED)
     assert total == 1 and completed[0].id == done.id
@@ -261,7 +262,7 @@ def test_summary_carries_no_transcript_and_no_paths_to_secrets(tmp_path, setting
 
 def test_cleanup_only_touches_finished_jobs(store, settings, tmp_path):
     finished = store.create(_source(tmp_path, "done.mp4"), settings)
-    store.update(finished.id, status=COMPLETED, qc_ok=True, finished_at=time.time() - 86400 * 5)
+    _finish(store, finished, qc_ok=True, finished_at=time.time() - 86400 * 5)
     running = store.create(_source(tmp_path, "running.mp4"), settings)
     store.update(running.id, status=PROCESSING, pid=os.getpid())
 
@@ -273,7 +274,7 @@ def test_cleanup_only_touches_finished_jobs(store, settings, tmp_path):
 
 def test_cleanup_dry_run_deletes_nothing(store, settings, tmp_path):
     job = store.create(_source(tmp_path), settings)
-    store.update(job.id, status=COMPLETED, qc_ok=True)
+    _finish(store, job, qc_ok=True)
     result = store.cleanup(dry_run=True)
     assert job.id in result["removed"]
     assert store.get(job.id) is not None
@@ -282,7 +283,7 @@ def test_cleanup_dry_run_deletes_nothing(store, settings, tmp_path):
 def test_cleanup_removes_the_job_directory_but_not_anything_outside(store, settings, tmp_path):
     source = _source(tmp_path)
     job = store.create(source, settings)
-    store.update(job.id, status=COMPLETED, qc_ok=True)
+    _finish(store, job, qc_ok=True)
     job_dir = tmp_path / "work" / "jobs" / job.id
     job_dir.mkdir(parents=True)
     (job_dir / "dub.wav").write_bytes(b"x")
@@ -318,7 +319,7 @@ def test_a_stale_heartbeat_is_the_signal_where_pids_cannot_be_probed(
         heartbeat_at=time.time() - 600,
         started_at=time.time() - 30,
     )
-    monkeypatch.setattr(jobs_module, "_pid_alive", lambda pid: True)  # never believes a pid is dead
+    monkeypatch.setattr(jobs_module, "_can_probe_pid", lambda: False)  # as on Windows
     assert store.get(job.id).status == INTERRUPTED
 
 
@@ -328,5 +329,5 @@ def test_a_fresh_heartbeat_keeps_a_live_job_alive(store, settings, tmp_path, mon
     source = _source(tmp_path)
     job = store.create(source, settings)
     store.update(job.id, status=PROCESSING, pid=os.getpid(), heartbeat_at=time.time())
-    monkeypatch.setattr(jobs_module, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(jobs_module, "_can_probe_pid", lambda: False)
     assert store.get(job.id).status == PROCESSING

@@ -4,7 +4,7 @@ Written before the next phase of work, as the project's own rules require: inspe
 report, then implement in separate reviewed changes. **Nothing in the "missing" tables
 below is implemented yet.** Where a feature is partial, it says exactly how far it goes.
 
-Current release: **0.2.0**. Everything in "implemented" is tested; everything else is
+Current release: **0.2.1**. Everything in "implemented" is tested; everything else is
 not, and is not advertised anywhere.
 
 ---
@@ -81,7 +81,10 @@ next phase closes (see §5).
 
 | Area | Feature | State | Note |
 |---|---|---|---|
-| Jobs | job lifecycle (`queued → processing → qc → done`), job ids, status, result, cancel, list | **done (0.2.0)** | `jobs.py` + `JobRunner`; `interrupted` derived, recovery on startup |
+| Jobs | job lifecycle, job ids, status, result, cancel, list | **done (0.2.0), hardened (0.2.1)** | request-based ids, claims with tokens, heartbeat, validated transitions |
+| Jobs | multi-language jobs from one source | **done (0.2.1)** | the request hash is part of the id |
+| Jobs | cross-process ownership | **done (0.2.1)** | claim file with `O_EXCL`; tested with a subprocess |
+| Providers | retry safety for non-idempotent calls | **done (0.2.1)** | `ambiguous` instead of a silent second charge |
 | Jobs | progress reporting, cancellation, retry of a failed stage | **done (0.2.0)** | cancellation is cooperative; stated, not implied |
 | MCP | `dubforge_get_capabilities`, `validate_config`, job tools, `cleanup_jobs`, `check_provider_health` | **done (0.2.0)** | 11 new tools; `analyze_video` deliberately skipped (duplicate of `probe_media` + `plan_dub`) |
 | MCP | `translate_transcript`, `generate_speech` as separate stage tools | **missing** | only the pipeline and transcription are exposed; a stage tool needs segment-level caching first |

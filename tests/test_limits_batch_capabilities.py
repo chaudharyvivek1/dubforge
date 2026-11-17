@@ -183,6 +183,7 @@ def test_collect_sources_never_feeds_on_its_own_output(lesson_folder, tmp_path):
     settings = _batch_settings(tmp_path, demo.DEMO_SCRIPT)
     store = JobStore(settings.workdir)
     job = store.create(lesson_folder / "a.mp4", settings)
+    store.update(job.id, status="processing", pid=1)
     store.update(job.id, status="completed", output=str(lesson_folder / "a.hi.mp4"), qc_ok=True)
     (lesson_folder / "a.hi.mp4").write_bytes(b"dub output")
 

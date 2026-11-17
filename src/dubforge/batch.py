@@ -11,6 +11,8 @@ finished video must not be dubbed twice, and nothing may overwrite its own sourc
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -120,11 +122,7 @@ class BatchResult:
 
 def known_outputs(store: JobStore) -> set[str]:
     """Every output path any job has produced, so a batch never dubs its own results."""
-    outputs: set[str] = set()
-    for job in store.list(limit=200)[0]:
-        if job.output:
-            outputs.add(str(Path(job.output).resolve()))
-    return outputs
+    return store.output_paths()
 
 
 def collect_sources(
@@ -133,10 +131,11 @@ def collect_sources(
     exclude_dir: str | Path | None = None,
     store: JobStore | None = None,
 ) -> list[Path]:
-    """A file, or a folder of media files.
+    """A file, or a folder of media files, with duplicates and outputs removed.
 
-    `exclude_dir` keeps a batch from feeding on its own output: dubbing writes into
-    `<workdir>/out/`, and a second run must not treat those files as new lessons.
+    Three things are filtered out on purpose: files inside the work directory, files that
+    are a dub this tool produced, and two paths that resolve to the same file (a symlink
+    and its target must not be dubbed twice).
     """
     path = Path(target).expanduser()
     if path.is_file():
@@ -146,33 +145,72 @@ def collect_sources(
     skip = Path(exclude_dir).expanduser().resolve() if exclude_dir else None
     outputs = known_outputs(store) if store is not None else set()
     pattern = "**/*" if recursive else "*"
-    found = []
+    found: list[Path] = []
+    seen: set[str] = set()
     for candidate in path.glob(pattern):
         if not candidate.is_file() or candidate.suffix.lower() not in MEDIA_SUFFIXES:
             continue
-        if str(candidate.resolve()) in outputs:
+        try:
+            resolved = str(candidate.resolve())
+        except OSError:
+            continue
+        if resolved in seen:
+            continue  # the same file twice, via a symlink or a case-insensitive name
+        if resolved in outputs:
             continue  # this file is a dub this tool produced, not a lesson
         if skip is not None:
             try:
-                candidate.resolve().relative_to(skip)
+                Path(resolved).relative_to(skip)
                 continue  # inside the work directory: not an input
             except ValueError:
                 pass
+        seen.add(resolved)
         found.append(candidate)
     return sorted(found)
 
 
-def output_for(source: str | Path, settings: Settings, out_dir: str | Path | None = None) -> Path:
-    """Where a batch writes a dub: outside the input folder, never over the source."""
+def output_for(
+    source: str | Path,
+    settings: Settings,
+    out_dir: str | Path | None = None,
+    batch_root: str | Path | None = None,
+) -> Path:
+    """Where a batch writes a dub: unique, human-readable, never over the source.
+
+    * the relative folder structure under `batch_root` is preserved, so
+      `class-a/lesson.mp4` and `class-b/lesson.mp4` do not collide;
+    * if a name still collides (two folders flattened, or an earlier different file), a
+      short hash of the *resolved source path* is appended — deterministic, so re-running
+      the same batch lands on the same file instead of accumulating copies;
+    * the language is tagged once, and an audio source becomes `.m4a`.
+    """
     source = Path(source)
     audio_only = source.suffix.lower() in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"}
     suffix = ".m4a" if audio_only else ".mp4"
     stem = source.stem
     if stem.endswith(f".{settings.target_lang}"):
-        stem = stem[: -(len(settings.target_lang) + 1)]  # already tagged: do not tag twice
+        stem = stem[: -(len(settings.target_lang) + 1)]
+
+    relative_parent = Path()
+    if batch_root is not None:
+        with contextlib.suppress(ValueError):
+            relative_parent = source.resolve().parent.relative_to(
+                Path(batch_root).expanduser().resolve()
+            )
+
     directory = Path(out_dir) if out_dir else Path(settings.workdir) / "out"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / f"{stem}.{settings.target_lang}{suffix}"
+    target = (directory / relative_parent / f"{stem}.{settings.target_lang}{suffix}").resolve()
+
+    if target == source.resolve():
+        raise ValueError(f"refusing to write over the source file: {source}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if target.exists():
+        # Keep the previous file and disambiguate deterministically from the source path.
+        tag = hashlib.sha256(str(source.resolve()).encode("utf-8")).hexdigest()[:6]
+        target = target.with_name(f"{target.stem}-{tag}{target.suffix}")
+    return target
 
 
 def run_batch(
@@ -193,9 +231,14 @@ def run_batch(
     say = log or (lambda message: None)
     result = BatchResult()
 
+    batch_root = Path(sources[0]).expanduser().resolve().parent if len(sources) == 1 else None
+    seen: set[str] = set()
     try:
         for source in sources:
             source = str(Path(source).expanduser().resolve())
+            if source in seen:
+                continue  # the same file twice in one run: dub it once
+            seen.add(source)
             item = BatchItem(source=source)
 
             # Resume: a completed job with an output on disk is not redone.
@@ -223,7 +266,7 @@ def run_batch(
                 except Exception as exc:  # noqa: BLE001 - an estimate must not stop a batch
                     result.estimates.setdefault("errors", {})[Path(source).name] = str(exc)[:200]
 
-            target_output = output_for(source, settings, out_dir)
+            target_output = output_for(source, settings, out_dir, batch_root=batch_root)
             if (
                 target_output.resolve() == Path(source).resolve()
             ):  # pragma: no cover - guarded upstream

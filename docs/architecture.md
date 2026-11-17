@@ -139,7 +139,7 @@ long encode: a 40-minute video is muxed in seconds.
 severity `fail` fails, and the CLI then exits 1. See
 [quality.md](quality.md#the-checks).
 
-## Jobs (0.2.0)
+## Jobs (0.2.0, hardened in 0.2.1)
 
 ```
 <workdir>/
@@ -160,9 +160,23 @@ The design decisions worth knowing:
 * **A job is a file, not a row.** No database, no broker, no daemon. `JobStore` reads and
   writes JSON atomically; `JobRunner` is a bounded thread pool. A restart is recovered by
   reconciling `processing` jobs against their pid and heartbeat.
-* **The job id is the source path.** `<stem>-<pathhash>` — the same identity the
-  workspace uses. Submitting a file twice returns the running job, and a job's artefacts
-  are always in the directory its document names.
+* **The job id is the request.** `<stem>-<pathhash>-<requesthash>`: the path hash keeps the
+  workspace identity, the request hash covers everything that changes the result (languages,
+  providers, models, voices, glossary, context, mix and timing settings) and nothing that
+  does not (`workdir`, `cache`, logging). So one video can have a Hindi job and a Tamil job at
+  once, an identical request deduplicates, and a different voice never inherits an old
+  output. Ids from 0.2.0 still load.
+* **Ownership is a claim file.** Created with `O_EXCL`, holding a token, pid, host and start
+  time. `update(token=…)` refuses a worker that lost it; `heartbeat()` and `release()` are
+  owner-only. A claim from a dead process is reclaimed; a live one is never stolen.
+* **Liveness is a pid *and* a heartbeat.** The worker refreshes the heartbeat on a timer
+  (`job_heartbeat_interval_s`), because a provider call can legitimately take minutes. On
+  the same host a live pid wins over a stale heartbeat; where a pid cannot be probed
+  (Windows) or the worker is elsewhere, the heartbeat decides (`job_heartbeat_stale_s`). A
+  heartbeat from the future counts as fresh, so clock skew cannot look like death.
+* **Attempts are recorded, not inferred.** `retry` increments `attempts`, appends to
+  `attempt_history` (bounded to 50), clears the previous attempt's result fields and re-runs
+  the request snapshot stored with the job.
 * **`interrupted` is derived, not stored hopefully.** A job with a dead pid (or a stale
   heartbeat, which is all Windows allows) becomes `interrupted` on read. It is never
   reported as completed.
@@ -170,8 +184,13 @@ The design decisions worth knowing:
   and before every paid call. An ffmpeg run in progress is not killed; the next boundary
   is the next line of dialogue at worst. This is stated in the tool output rather than
   promised away.
-* **Duplicate execution is refused in-process** by the runner's in-flight set, and across
-  processes by the workspace lock the pipeline already takes.
+* **Duplicate execution is refused in-process** by the runner's in-flight set and across
+  processes by the claim file — verified with a real subprocess in the tests.
+* **Illegal transitions are refused.** `TRANSITIONS` is enforced by the store; a terminal
+  job cannot become active again except through `retry`.
+* **Retries are operation-aware.** A 429/5xx answer is retried; a network failure is retried
+  only when the call is idempotent or carries a vendor-documented idempotency key. Otherwise
+  the error is `kind="ambiguous"` and says the request may have been billed.
 
 ## Files on disk
 

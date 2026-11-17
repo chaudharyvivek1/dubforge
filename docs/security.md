@@ -125,6 +125,35 @@ whose filesystem access matches what you are willing to grant it.
 * **Cancellation is cooperative**, and the tool output says so rather than implying an
   in-flight provider call is interrupted.
 
+## Retries, billing and ambiguous outcomes (0.2.1)
+
+A retry is a spend. The HTTP layer therefore distinguishes two failures that look alike:
+
+* the vendor **answered** 429/5xx — nothing was billed, so retrying is free and correct;
+* the connection **timed out** — the vendor may have accepted and billed the request.
+
+The second case is not retried for a non-idempotent call (synthesis, translation,
+transcription). It raises `ProviderError(kind="ambiguous")` with a message that says the
+outcome is unknown, and the run records it. Only OpenAI's documented `Idempotency-Key` is
+used; no header is invented for any other vendor, and no call is marked idempotent on a
+guess. `max_retries` bounds the budget, `Retry-After` is honoured rather than guessed, and
+every retry is counted in the job document, the report and the event log — never with a key
+or a header in it.
+
+## Job identity and ownership (0.2.1)
+
+* **A job id is validated** against `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$` before it touches
+  the filesystem, so `../../etc/passwd` is an `invalid_argument`.
+* **A claim file is the lock.** Created with `O_EXCL` in the registry directory, holding a
+  token, pid, host and start time. Only the owner may update the job, refresh its heartbeat
+  or release it; a claim from a dead process is reclaimed, a live one is never stolen.
+* **A stale worker cannot overwrite a newer attempt**: `update(token=…)` fails if the claim
+  moved on.
+* **Cleanup stays inside the work directory**: it only deletes `registry/<id>.json`,
+  `registry/<id>.claim` and `jobs/<id>/`, resolving each path against the workdir first.
+* **No secrets in diagnostics**: events and warnings carry provider names, ids, attempts and
+  error kinds — never a key, a request header or transcript text.
+
 ## Uploads for lip sync
 
 `synclabs` fetches URLs. dubforge deliberately does **not** upload your footage to a

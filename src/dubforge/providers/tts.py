@@ -10,6 +10,7 @@ and tell the truth about what they rendered.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -170,6 +171,7 @@ class ElevenLabsTTS(TTSProvider):
             headers={**self._headers(), "Content-Type": "application/json", "Accept": "audio/mpeg"},
             json_body=body,
             timeout=self.settings.timeout_s,
+            retries=self.settings.max_retries,
             provider="elevenlabs",
         )
         Path(raw).write_bytes(resp.content)
@@ -243,14 +245,17 @@ class OpenAITTS(TTSProvider):
                 f"Speak as a dubbing actor would: {hint}. Keep it natural and unhurried."
             )
         raw = str(Path(out_path).with_suffix(".raw.wav"))
+        # OpenAI documents `Idempotency-Key`, so a retried synthesis cannot be billed twice.
         resp = post(
             "https://api.openai.com/v1/audio/speech",
+            idempotency_key=hashlib.sha256(f"{model}:{voice}:{text}".encode()).hexdigest()[:32],
             headers={
                 "Authorization": f"Bearer {self.settings.provider_key('openai') or ''}",
                 "Content-Type": "application/json",
             },
             json_body=body,
             timeout=self.settings.timeout_s,
+            retries=self.settings.max_retries,
             provider="openai",
         )
         Path(raw).write_bytes(resp.content)
@@ -305,6 +310,7 @@ class GoogleTTS(TTSProvider):
             },
             json_body=body,
             timeout=self.settings.timeout_s,
+            retries=self.settings.max_retries,
             provider="google",
         )
         payload = resp.json()
@@ -362,6 +368,7 @@ class SarvamTTS(TTSProvider):
             },
             json_body=body,
             timeout=self.settings.timeout_s,
+            retries=self.settings.max_retries,
             provider="sarvam",
         )
         payload = resp.json()

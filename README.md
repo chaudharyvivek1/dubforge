@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-316%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-371%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-21%20tools-6f42c1)](src/dubforge/server.py)
@@ -76,7 +76,7 @@ video ──► probe ──► separate stems ──► transcribe ──► tr
 | **Fit the clock** | every line is budgeted in characters before it is spoken; over-long lines go *back* to the translator |
 | **Stretch** | only what is still slightly long, and never past `--max-speed` (1.15x by default) |
 | **Mix** | loudness-normalised dub + original bed with sidechain ducking, then a stream copy of the picture |
-| **QC** | fifteen checks; a `fail` exits non-zero and says which line broke |
+| **QC** | twenty-one checks; a `fail` exits non-zero and says which line broke |
 
 ## Install
 
@@ -195,12 +195,22 @@ queued → validating → processing → quality_check → completed
 
 * **`interrupted` is a real state.** A job whose process died is reported as interrupted
   — never as completed — and `recover()` reconciles the registry on startup.
-* **One job per source path.** Submitting the same file twice returns the job already
-  running instead of starting a second dub.
+* **One job per request, not per file.** The id is `<stem>-<pathhash>-<requesthash>`, so the
+  same video into Hindi and Tamil is two jobs that run side by side, the identical request
+  twice is one job (`duplicate: true`), and a different voice or provider can never inherit
+  another run's output.
+* **One owner, one heartbeat.** A claim file (created with `O_EXCL`) gives exactly one worker
+  the right to move a job, and the worker refreshes a heartbeat on a timer. Recovery trusts
+  the pid where pids mean something, and the heartbeat where they do not — so a four-minute
+  provider call is never mistaken for a dead process.
 * **Cancellation is cooperative and honest about it:** checked between stages and before
   every paid call, so a line in flight finishes and ffmpeg is not killed mid-write.
 * **`providers_used`** records what actually ran, separately from what you asked for —
   because with `--fallback` those are not always the same.
+* **A retry can cost money.** A timeout on a synthesis is *not* retried: the vendor may have
+  accepted and billed it. You get `kind: "ambiguous"` and a sentence saying so, instead of a
+  silent second charge. Rate limits and server errors are retried; only OpenAI gets its
+  documented `Idempotency-Key`, because inventing one would be a lie.
 
 From an agent, the same thing over MCP: `dubforge_submit_job` → `dubforge_get_job_status`
 → `dubforge_get_job_result`, with `dubforge_cancel_job`, `dubforge_retry_job` and
@@ -313,7 +323,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [FAQ.md](FAQ.md) | 22 real questions: no keys, rushed lines, one voice, music gone, cloning, cost |
 | [docs/architecture.md](docs/architecture.md) | every stage, the data model, files on disk, how to add a provider, the design rules |
 | [docs/providers.md](docs/providers.md) | all 24 adapters: env vars, capabilities, honest quality notes, gotchas, and how to write one |
-| [docs/quality.md](docs/quality.md) | the timing arithmetic, the fifteen QC checks, and a symptom → fix table |
+| [docs/quality.md](docs/quality.md) | the timing arithmetic, the twenty-one QC checks, and a symptom → fix table |
 | [docs/languages.md](docs/languages.md) | Indic coverage per stage, script/number/formality/gender traps, RTL |
 | [docs/cost.md](docs/cost.md) | list prices with sources, worked examples, how to cut the bill |
 | [docs/school.md](docs/school.md) | classroom deployment, consent, batch runs, offline mode, a first-week plan |
@@ -327,7 +337,8 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/configuration.md](docs/configuration.md) | **every setting**: environment name, type, default, range (generated) |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
-| [docs/release-0.2.0.md](docs/release-0.2.0.md) | the release checklist: scope, compatibility, verification, manual steps |
+| [docs/release-0.2.1.md](docs/release-0.2.1.md) | the 0.2.1 reliability checklist: bugs, fixes, tests, risks |
+| [docs/release-0.2.0.md](docs/release-0.2.0.md) | the 0.2.0 checklist: job engine, scope, compatibility |
 
 ## Repository layout
 

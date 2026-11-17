@@ -238,9 +238,9 @@ def test_get_job_result_refuses_an_unfinished_job(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
     store = JobStore(tmp_path / "work")
-    job = store.create(
-        tmp_path / "x.mp4", Settings(target_lang="hi", workdir=str(tmp_path / "work"))
-    )
+    source = tmp_path / "x.mp4"
+    source.write_bytes(b"x")
+    job = store.create(source, Settings(target_lang="hi", workdir=str(tmp_path / "work")))
     payload = call("dubforge_get_job_result", {"job_id": job.id})
     assert payload["error"]["code"] == "invalid_argument"
     assert "still queued" in payload["error"]["message"]
@@ -261,9 +261,10 @@ def test_cleanup_defaults_to_a_dry_run(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
     store = JobStore(tmp_path / "work")
-    job = store.create(
-        tmp_path / "x.mp4", Settings(target_lang="hi", workdir=str(tmp_path / "work"))
-    )
+    source = tmp_path / "x.mp4"
+    source.write_bytes(b"x")
+    job = store.create(source, Settings(target_lang="hi", workdir=str(tmp_path / "work")))
+    store.update(job.id, status="processing", pid=1)
     store.update(job.id, status="completed", qc_ok=True)
     payload = call("dubforge_cleanup_jobs", {})
     assert payload["ok"] is True
@@ -277,9 +278,9 @@ def test_cancel_and_retry_are_reachable(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
     store = JobStore(tmp_path / "work")
-    job = store.create(
-        tmp_path / "x.mp4", Settings(target_lang="hi", workdir=str(tmp_path / "work"))
-    )
+    source = tmp_path / "x.mp4"
+    source.write_bytes(b"x")
+    job = store.create(source, Settings(target_lang="hi", workdir=str(tmp_path / "work")))
     cancelled = call("dubforge_cancel_job", {"job_id": job.id})
     assert cancelled["ok"] is True
     assert cancelled["job"]["status"] == "cancelled"

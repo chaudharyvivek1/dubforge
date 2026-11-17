@@ -508,3 +508,66 @@ def test_plan_refuses_a_file_over_the_duration_limit(demo_clip, tmp_path):
     with pytest.raises(pipeline.DubError) as exc:
         pipeline.plan(demo_clip, settings)
     assert "limit" in str(exc.value).lower() or "max_input_seconds" in str(exc.value)
+
+
+# ------------------------------------------------------------- QC additions (0.2.1)
+
+
+@needs_ffmpeg
+def test_qc_reports_subtitle_and_stream_health(demo_clip, tmp_path):
+    settings = Settings(script=demo.DEMO_SCRIPT, workdir=str(tmp_path / "work"), **BASE_SETTINGS)
+    result = pipeline.dub(demo_clip, settings, output=tmp_path / "qc.mp4")
+    checks = {item["check"]: item for item in result.qc["checks"]}
+    for name in (
+        "subtitle_timing",
+        "subtitle_readability",
+        "streams_present",
+        "video_codec_preserved",
+        "audio_layout",
+        "not_mostly_silent",
+    ):
+        assert name in checks, f"{name} missing from QC"
+    # the demo muxes the picture through unchanged and has a real dub track
+    assert checks["streams_present"]["ok"] is True
+    assert checks["video_codec_preserved"]["ok"] is True
+    assert checks["subtitle_timing"]["ok"] is True
+
+
+@needs_ffmpeg
+def test_readability_thresholds_come_from_settings(demo_clip, tmp_path):
+    """A one-character budget makes every line unreadable; that must be visible."""
+    settings = Settings(
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "work"),
+        qc_max_chars_per_line=10,
+        **BASE_SETTINGS,
+    )
+    result = pipeline.dub(demo_clip, settings, output=tmp_path / "tight.mp4")
+    checks = {item["check"]: item for item in result.qc["checks"]}
+    assert checks["subtitle_readability"]["ok"] is False
+    assert checks["subtitle_readability"]["severity"] == "warn"
+
+
+@needs_ffmpeg
+def test_retries_are_counted_and_reported(demo_clip, tmp_path):
+    """The retry sink must reach the result, so a job can say 'this run retried'."""
+    from dubforge.providers import http as provider_http
+
+    settings = Settings(script=demo.DEMO_SCRIPT, workdir=str(tmp_path / "work"), **BASE_SETTINGS)
+    original = pipeline._pick_voices
+
+    def note_a_retry(*args, **kwargs):
+        provider_http._note_retry("stub", "HTTP 429 (rate_limit)", 0)
+        return original(*args, **kwargs)
+
+    import dubforge.pipeline as pipeline_module
+
+    pipeline_module._pick_voices = note_a_retry
+    try:
+        result = pipeline.dub(demo_clip, settings, output=tmp_path / "retried.mp4")
+    finally:
+        pipeline_module._pick_voices = original
+    assert result.retries
+    assert any("provider retry" in warning for warning in result.warnings)
+    report = Path(result.report).read_text(encoding="utf-8")
+    assert "Provider retries" in report

@@ -115,6 +115,7 @@ class _OpenAICompatibleASR(ASRProvider):
                 data=data,
                 files={"file": (Path(audio).name, handle, "audio/wav")},
                 timeout=self.settings.timeout_s,
+                retries=self.settings.max_retries,
                 provider=self.provider_name,
             )
         payload = resp.json()
@@ -227,6 +228,7 @@ class DeepgramASR(ASRProvider):
                 headers={"Authorization": f"Token {key}", "Content-Type": "audio/wav"},
                 data=handle.read(),
                 timeout=self.settings.timeout_s,
+                retries=self.settings.max_retries,
                 provider="deepgram",
             )
         payload = resp.json()
@@ -304,6 +306,7 @@ class ElevenLabsScribeASR(ASRProvider):
                 data=data,
                 files={"file": (Path(audio).name, handle, "audio/wav")},
                 timeout=self.settings.timeout_s,
+                retries=self.settings.max_retries,
                 provider="elevenlabs",
             )
         payload = resp.json()

@@ -12,6 +12,7 @@ budget in the prompt.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Iterable
@@ -178,6 +179,9 @@ class OpenAITranslator(LLMTranslator):
         key = self.settings.provider_key("openai") or ""
         resp = post(
             "https://api.openai.com/v1/chat/completions",
+            idempotency_key=hashlib.sha256(
+                f"{self.settings.translate_model}:{user[:4000]}".encode()
+            ).hexdigest()[:32],
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json_body={
                 "model": self.settings.translate_model or "gpt-4.1-mini",
@@ -188,6 +192,7 @@ class OpenAITranslator(LLMTranslator):
                 ],
             },
             timeout=self.settings.timeout_s,
+            retries=self.settings.max_retries,
             provider="openai",
         )
         payload = resp.json()
@@ -232,6 +237,7 @@ class GeminiTranslator(LLMTranslator):
                 "generationConfig": {"temperature": 0.3},
             },
             timeout=self.settings.timeout_s,
+            retries=self.settings.max_retries,
             provider="gemini",
         )
         payload = resp.json()
@@ -276,6 +282,7 @@ class SarvamTranslator(Translator):
                     "enable_preprocessing": True,
                 },
                 timeout=self.settings.timeout_s,
+                retries=self.settings.max_retries,
                 provider="sarvam",
             )
             payload = resp.json()
@@ -356,6 +363,7 @@ class DeepLTranslator(Translator):
             headers={"Authorization": f"DeepL-Auth-Key {key}", "Content-Type": "application/json"},
             json_body=body,
             timeout=self.settings.timeout_s,
+            retries=self.settings.max_retries,
             provider="deepl",
         )
         rows = resp.json().get("translations") or []
@@ -422,6 +430,7 @@ class OllamaTranslator(LLMTranslator):
                 ],
             },
             timeout=self.settings.timeout_s,
+            retries=self.settings.max_retries,
             provider="ollama",
         )
         payload = resp.json()
