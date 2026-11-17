@@ -18,7 +18,32 @@ from ..media import Segment, Transcript
 
 
 class ProviderError(RuntimeError):
-    """A provider refused or failed. Message is safe to show a user: no secrets."""
+    """A provider refused or failed. Message is safe to show a user: no secrets.
+
+    `kind` is a stable classification so a caller can decide what to do without
+    matching on prose: auth, rate_limit, timeout, network, bad_request, not_found,
+    server, unknown. `retryable` says whether trying again could plausibly help.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        kind: str = "unknown",
+        status: int | None = None,
+        retryable: bool = False,
+    ):
+        super().__init__(message)
+        self.kind = kind
+        self.status = status
+        self.retryable = retryable
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "status": self.status,
+            "retryable": self.retryable,
+            "message": str(self)[:400],
+        }
 
 
 class ProviderUnavailable(ProviderError):
@@ -124,6 +149,48 @@ class Provider:
         data = self.spec.to_dict()
         data["available"] = self.available
         data["missing"] = self.missing()
+        return data
+
+    # ------------------------------------------------------------------ health
+    def probe(self) -> str | None:
+        """A cheap authenticated call that proves the key works. `None` = no cheap probe.
+
+        Never returns or logs the key; the caller only learns whether the round trip
+        succeeded.
+        """
+        return None
+
+    def health(self, live: bool = False) -> dict:
+        missing = self.missing()
+        data = {
+            "provider": self.spec.name,
+            "kind": self.spec.kind,
+            "title": self.spec.title,
+            "ready": not missing,
+            "missing": missing,
+            "verified": self.spec.verified,
+            "live": None,
+            "detail": "",
+        }
+        if not live:
+            data["detail"] = "readiness only (no network call)"
+            return data
+        if missing:
+            data["live"] = False
+            data["detail"] = "; ".join(missing)
+            return data
+        try:
+            detail = self.probe()
+        except ProviderError as exc:
+            data["live"] = False
+            data["detail"] = f"{exc.kind}: {str(exc)[:200]}"
+            return data
+        except Exception as exc:  # noqa: BLE001 - a probe must never raise at the caller
+            data["live"] = False
+            data["detail"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+            return data
+        data["live"] = True if detail is not None else None
+        data["detail"] = detail or "no cheap probe for this adapter; readiness checked only"
         return data
 
 

@@ -337,6 +337,8 @@ def test_a_provider_that_returns_no_audio_fails_the_line(demo_clip, tmp_path):
             return SynthResult(path=str(out_path), duration=0.0, provider="broken")
 
     class Shim:
+        """Stands in for the registry module; the pipeline resolves *chains* now."""
+
         def __getattr__(self, item):
             return getattr(real_registry, item)
 
@@ -344,6 +346,11 @@ def test_a_provider_that_returns_no_audio_fails_the_line(demo_clip, tmp_path):
             if kind == "tts":
                 return BrokenTTS()
             return real_registry.resolve(kind, settings, requested)
+
+        def resolve_chain(self, kind, settings=None, requested=None):
+            if kind == "tts":
+                return [BrokenTTS()]
+            return real_registry.resolve_chain(kind, settings, requested)
 
     settings = Settings(
         source_lang="en",
@@ -394,3 +401,110 @@ def test_a_cache_failure_does_not_fail_the_dub(demo_clip, tmp_path, monkeypatch)
     assert any("cache not written" in warning for warning in result.warnings)
     checks = {c["check"]: c for c in result.qc["checks"]}
     assert checks["every_line_has_audio"]["ok"] is True
+
+
+# --------------------------------------------------------------- 0.2.0 behaviours
+
+
+BASE_SETTINGS = {
+    "source_lang": "en",
+    "target_lang": "hi",
+    "asr": "stub",
+    "translator": "stub",
+    "tts": "stub",
+    "separator": "none",
+    "cache": False,
+}
+
+
+@needs_ffmpeg
+def test_a_cancelled_run_stops_before_the_next_stage(demo_clip, tmp_path):
+    from dubforge.pipeline import DubCancelled
+
+    settings = Settings(script=demo.DEMO_SCRIPT, workdir=str(tmp_path / "work"), **BASE_SETTINGS)
+    with pytest.raises(DubCancelled):
+        pipeline.dub(demo_clip, settings, output=tmp_path / "never.mp4", cancel=lambda: True)
+    assert not (tmp_path / "never.mp4").exists()
+
+
+@needs_ffmpeg
+def test_the_providers_that_actually_ran_are_recorded(demo_clip, tmp_path):
+    settings = Settings(script=demo.DEMO_SCRIPT, workdir=str(tmp_path / "work"), **BASE_SETTINGS)
+    result = pipeline.dub(demo_clip, settings, output=tmp_path / "p.mp4")
+    assert result.providers_used["asr"] == "stub"
+    assert result.providers_used["tts"] == "stub"
+    assert result.providers_used["translate"] == "stub"
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["providers_used"] == result.providers_used
+
+
+@needs_ffmpeg
+def test_progress_is_reported_with_a_growing_step_count(demo_clip, tmp_path):
+    seen: list[tuple[str, int, int]] = []
+    settings = Settings(script=demo.DEMO_SCRIPT, workdir=str(tmp_path / "work"), **BASE_SETTINGS)
+    pipeline.dub(
+        demo_clip,
+        settings,
+        output=tmp_path / "prog.mp4",
+        progress=lambda stage, done, total: seen.append((stage, done, total)),
+    )
+    assert len(seen) >= 5
+    assert seen[-1][1] >= seen[0][1]
+    assert all(total >= done for _, done, total in seen)
+
+
+@needs_ffmpeg
+def test_fallback_is_opt_in_and_is_announced(demo_clip, tmp_path, monkeypatch):
+    """Switching providers changes quality and cost, so it must never be silent."""
+    from dubforge.providers import registry as real_registry
+    from dubforge.providers.base import ProviderError, Spec, TTSProvider
+
+    class BrokenTTS(TTSProvider):
+        spec = Spec(
+            name="broken",
+            kind="tts",
+            title="Always fails",
+            verified=False,
+            quality="fails on purpose",
+        )
+        name = "broken"
+
+        def voices(self, language=""):
+            return []
+
+        def synthesize(self, text, voice, out_path, style=None, emotion=None, sample_rate=48000):
+            raise ProviderError("provider is down", kind="server", retryable=True)
+
+    original_chain = real_registry.resolve_chain
+
+    def chain(kind, settings=None, requested=None):
+        if kind == "tts":
+            return [BrokenTTS(), real_registry.create("tts", "stub", settings)]
+        return original_chain(kind, settings, requested)
+
+    monkeypatch.setattr(real_registry, "resolve_chain", chain)
+    base = {**BASE_SETTINGS, "script": demo.DEMO_SCRIPT, "workdir": str(tmp_path / "work")}
+
+    # fallback disabled: the failure is the failure
+    with pytest.raises(pipeline.DubError):
+        pipeline.dub(demo_clip, Settings(**base), output=tmp_path / "no-fallback.mp4")
+
+    # fallback enabled: it completes, says so, and records who ran
+    settings = Settings(**base).with_overrides(fallback=True)
+    result = pipeline.dub(demo_clip, settings, output=tmp_path / "fallback.mp4")
+    assert Path(result.output).exists()
+    assert result.providers_used["tts"] == "stub"
+    assert any("falling back" in warning for warning in result.warnings), result.warnings
+
+
+@needs_ffmpeg
+def test_plan_refuses_a_file_over_the_duration_limit(demo_clip, tmp_path):
+    settings = Settings(
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "work"),
+        max_input_seconds=2.0,
+        **BASE_SETTINGS,
+    )
+    with pytest.raises(pipeline.DubError) as exc:
+        pipeline.plan(demo_clip, settings)
+    assert "limit" in str(exc.value).lower() or "max_input_seconds" in str(exc.value)

@@ -7,9 +7,11 @@ import pytest
 
 fastmcp = pytest.importorskip("fastmcp", reason="the MCP extra is not installed")
 
+from dubforge.config import Settings  # noqa: E402
 from dubforge.server import build_server  # noqa: E402
 
 EXPECTED_TOOLS = {
+    # the original ten: names are a public contract and never change
     "dubforge_doctor",
     "list_providers",
     "probe_media",
@@ -20,6 +22,19 @@ EXPECTED_TOOLS = {
     "list_voices",
     "write_subtitles",
     "dubforge_version",
+    # job control
+    "dubforge_submit_job",
+    "dubforge_get_job_status",
+    "dubforge_get_job_result",
+    "dubforge_list_jobs",
+    "dubforge_cancel_job",
+    "dubforge_retry_job",
+    "dubforge_cleanup_jobs",
+    # intelligence
+    "dubforge_get_capabilities",
+    "dubforge_validate_config",
+    "dubforge_check_provider_health",
+    "dubforge_estimate_cost",
 }
 
 
@@ -161,3 +176,164 @@ def test_no_secret_is_echoed_by_any_tool(monkeypatch):
     payload = call("dubforge_doctor", {})
     assert "sk-live-must-never-appear" not in json.dumps(payload)
     assert payload["env"]["OPENAI_API_KEY"] is True
+
+
+# ------------------------------------------------------------------ job tools
+
+
+def _demo_clip(tmp_path):
+    from dubforge import demo
+
+    return demo.build_clip(tmp_path / "clip.mp4")
+
+
+def test_job_tools_round_trip(tmp_path, monkeypatch):
+    """submit → status → result, through the real tool surface."""
+    clip = _demo_clip(tmp_path)
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    monkeypatch.setenv("DUBFORGE_SCRIPT", "SPEAKER_00: hello\nSPEAKER_01: world\nSPEAKER_00: again")
+
+    submitted = call(
+        "dubforge_submit_job",
+        {
+            "path": str(clip),
+            "target_lang": "hi",
+            "asr": "stub",
+            "translator": "stub",
+            "tts": "stub",
+            "separator": "none",
+        },
+    )
+    assert submitted["ok"] is True, submitted
+    job_id = submitted["job"]["job_id"]
+
+    status = call("dubforge_get_job_status", {"job_id": job_id})
+    assert status["ok"] is True
+    assert status["job"]["status"] in {
+        "queued",
+        "validating",
+        "processing",
+        "quality_check",
+        "completed",
+        "failed",
+    }
+
+    from dubforge.jobs import JobRunner
+
+    # wait through the runner the server itself uses
+    runner = JobRunner(Settings(workdir=str(tmp_path / "work")))
+    final = runner.wait(job_id, timeout=180)
+    runner.shutdown()
+    assert final.status == "completed"
+    assert final.qc_ok is False  # the stub translator is flagged, by design
+
+    result = call("dubforge_get_job_result", {"job_id": job_id})
+    assert result["ok"] is True
+    assert result["qc"]["failures"] == ["translated"]
+    assert result["providers_used"]["asr"] == "stub"
+
+
+def test_get_job_result_refuses_an_unfinished_job(tmp_path, monkeypatch):
+    from dubforge.jobs import JobStore
+
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    store = JobStore(tmp_path / "work")
+    job = store.create(
+        tmp_path / "x.mp4", Settings(target_lang="hi", workdir=str(tmp_path / "work"))
+    )
+    payload = call("dubforge_get_job_result", {"job_id": job.id})
+    assert payload["error"]["code"] == "invalid_argument"
+    assert "still queued" in payload["error"]["message"]
+
+
+def test_list_jobs_validates_status_and_paginates(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    bad = call("dubforge_list_jobs", {"status": "nonsense"})
+    assert bad["error"]["code"] == "invalid_argument"
+    ok = call("dubforge_list_jobs", {"limit": 5, "offset": 0})
+    assert ok["ok"] is True
+    assert ok["total"] >= 0
+    assert ok["returned"] <= 5
+
+
+def test_cleanup_defaults_to_a_dry_run(tmp_path, monkeypatch):
+    from dubforge.jobs import JobStore
+
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    store = JobStore(tmp_path / "work")
+    job = store.create(
+        tmp_path / "x.mp4", Settings(target_lang="hi", workdir=str(tmp_path / "work"))
+    )
+    store.update(job.id, status="completed", qc_ok=True)
+    payload = call("dubforge_cleanup_jobs", {})
+    assert payload["ok"] is True
+    assert payload["dry_run"] is True
+    assert job.id in payload["removed"]
+    assert store.get(job.id) is not None, "a dry run must not delete anything"
+
+
+def test_cancel_and_retry_are_reachable(tmp_path, monkeypatch):
+    from dubforge.jobs import JobStore
+
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    store = JobStore(tmp_path / "work")
+    job = store.create(
+        tmp_path / "x.mp4", Settings(target_lang="hi", workdir=str(tmp_path / "work"))
+    )
+    cancelled = call("dubforge_cancel_job", {"job_id": job.id})
+    assert cancelled["ok"] is True
+    assert cancelled["job"]["status"] == "cancelled"
+    retried = call("dubforge_retry_job", {"job_id": job.id})
+    assert retried["ok"] is True, retried
+
+
+# ------------------------------------------------------------- intelligence tools
+
+
+def test_capabilities_tool_matches_the_module(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    from dubforge import capabilities
+
+    payload = call("dubforge_get_capabilities", {})
+    assert payload["ok"] is True
+    assert payload["capabilities"]["stages"] == list(capabilities.STAGES)
+
+
+def test_validate_config_tool_reports_problems(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    bad = tmp_path / "settings.json"
+    bad.write_text('{"max_speed": "fast"}', encoding="utf-8")
+    payload = call("dubforge_validate_config", {"config_path": str(bad)})
+    assert payload["ok"] is True, payload  # the tool call itself succeeded
+    assert payload["valid"] is False
+    assert payload["problems"], "an invalid file must produce problems"
+    assert any("max_speed" in problem for problem in payload["problems"])
+
+
+def test_provider_health_tool_is_ready_only_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    payload = call("dubforge_check_provider_health", {"kind": "tts", "live": False})
+    assert payload["ok"] is True
+    rows = payload["providers"]["tts"]
+    assert {row["provider"] for row in rows} >= {"elevenlabs", "stub"}
+    assert all(row["live"] is None for row in rows), "live=false must not touch the network"
+    bad = call("dubforge_check_provider_health", {"kind": "video"})
+    assert bad["error"]["code"] == "invalid_argument"
+
+
+def test_estimate_cost_tool_spends_nothing(tmp_path, monkeypatch):
+    clip = _demo_clip(tmp_path)
+    monkeypatch.setenv("DUBFORGE_WORKDIR", str(tmp_path / "work"))
+    payload = call(
+        "dubforge_estimate_cost",
+        {
+            "path": str(clip),
+            "target_lang": "hi",
+            "asr": "stub",
+            "translator": "stub",
+            "tts": "stub",
+        },
+    )
+    assert payload["ok"] is True
+    assert "estimates" in payload and "limits" in payload
+    assert payload["allowed"] is True

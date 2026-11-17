@@ -4,7 +4,7 @@ Written before the next phase of work, as the project's own rules require: inspe
 report, then implement in separate reviewed changes. **Nothing in the "missing" tables
 below is implemented yet.** Where a feature is partial, it says exactly how far it goes.
 
-Current release: **0.1.2**. Everything in "implemented" is tested; everything else is
+Current release: **0.2.0**. Everything in "implemented" is tested; everything else is
 not, and is not advertised anywhere.
 
 ---
@@ -81,18 +81,20 @@ next phase closes (see §5).
 
 | Area | Feature | State | Note |
 |---|---|---|---|
-| Jobs | job lifecycle (`queued → processing → qc → done`), job ids, status, result, cancel, list | **missing** | `manifest.json` records steps but nothing reads it as a job |
-| Jobs | progress reporting, cancellation, retry of a failed stage | **missing** | a run blocks the caller |
-| MCP | `dubforge_get_capabilities`, `validate_config`, `job_status`, `job_result`, `cancel_job`, `list_jobs`, `cleanup_workspace`, `check_provider_health` | **missing** | see §4 for the ones worth adding |
-| MCP | `translate_transcript`, `generate_speech` as separate stage tools | **missing** | today only the whole pipeline and transcription are exposed |
-| Providers | fallback chain when a provider fails mid-run | **missing** | `auto` picks once, at the start |
-| Providers | health check beyond "is the key set" | **partial** | only `ollama` probes its server |
-| Providers | rate-limit aware retry with backoff budget | **partial** | fixed 2 retries with 2/4/8 s backoff |
+| Jobs | job lifecycle (`queued → processing → qc → done`), job ids, status, result, cancel, list | **done (0.2.0)** | `jobs.py` + `JobRunner`; `interrupted` derived, recovery on startup |
+| Jobs | progress reporting, cancellation, retry of a failed stage | **done (0.2.0)** | cancellation is cooperative; stated, not implied |
+| MCP | `dubforge_get_capabilities`, `validate_config`, job tools, `cleanup_jobs`, `check_provider_health` | **done (0.2.0)** | 11 new tools; `analyze_video` deliberately skipped (duplicate of `probe_media` + `plan_dub`) |
+| MCP | `translate_transcript`, `generate_speech` as separate stage tools | **missing** | only the pipeline and transcription are exposed; a stage tool needs segment-level caching first |
+| Providers | fallback chain when a provider fails mid-run | **done (0.2.0)** | opt-in, announced, recorded in `providers_used` |
+| Providers | health check beyond "is the key set" | **done (0.2.0)** | cheap authenticated probe for 7 adapters, honest "no probe" for the rest |
+| Providers | rate-limit aware retry with backoff budget | **done (0.2.0)** | `Retry-After` honoured; `max_retries` configurable |
+| Limits | input size, duration, runtime, cost, concurrency, retries, retention | **done (0.2.0)** | `limits.py`, checked before spending and between stages |
+| Batch | folder processing, failure isolation, resume, aggregate estimate | **done (0.2.0)** | `batch.py` + `dubforge batch` |
 | Audio | multi-track export (dialogue / music / effects in one container) | **missing** | the mix is single-track |
 | Audio | silence trimming, pitch control, per-segment regeneration | **missing** | atempo only, pitch preserved by design |
 | Subtitles | line-length limits, reading-speed (CPS) validation, translation memory | **missing** | subtitle text is whatever the translation is |
 | Input | URL ingestion | **missing** | deliberate: it needs SSRF protection first (§7) |
-| Limits | maximum input size, maximum duration, per-run budget | **missing** | a 4-hour file will simply take hours |
+| Limits | maximum input size, maximum duration, per-run budget | **done (0.2.0)** | refused with the setting to change |
 | Output | MKV/MOV containers, FLAC/WAV/MP3 audio, configurable bitrate beyond `--audio-bitrate` | **partial** | mp4/m4a only, audio bitrate configurable |
 | Platform | REST API, web dashboard, batch/queue workers | **missing** | deliberately out of scope; interfaces kept clean |
 | Docs | per-feature stability labels | **partial** | README has a "what this does not do" section |
@@ -156,14 +158,14 @@ Sizes are the honest kind: **S** ≈ a day, **M** ≈ a week, **L** ≈ more tha
 |---|---|---|---|
 | **1 — Foundation** | content-hash cache, workspaces, locks, structured errors, CI gate, config validation, strict booleans, Windows CI | **done** (0.1.1, 0.1.2) | correctness and cross-platform reliability first |
 | **2 — Dubbing intelligence** | per-word target alignment, measured CPS per language, per-segment regeneration, subtitle readability checks | M–L | the biggest remaining jump in *quality* |
-| **3 — Jobs and MCP** | `jobs.py` + status/result/cancel/list, progress, cancellation, `capabilities`, `validate_config`, `cleanup_workspace`, run limits | M | the biggest remaining gap in *usability* |
-| **4 — Provider ecosystem** | health checks, opt-in fallback, integration tests behind a flag, one or two verified adapters | M | needs live keys to verify honestly |
+| **3 — Jobs and MCP** | `jobs.py` + status/result/cancel/list, progress, cancellation, `capabilities`, `validate_config`, `cleanup_jobs`, run limits | **done** (0.2.0) | the biggest gap in *usability*, now closed |
+| **4 — Provider ecosystem** | health checks, opt-in fallback, retry budgets, `providers_used` | **done** (0.2.0); live-API verification still open | needs live keys to verify honestly |
 | **5 — Distribution** | PyPI trusted publishing, Docker multi-arch, batch helper in the CLI, per-platform docs | S–M | mostly mechanical |
 | **6 — Platform** | REST design note, dashboard sketch, distributed worker interface | S (design only) | interfaces only, no implementation |
 
-Recommended order: **3 → 2 → 4 → 5**. Phase 3 because every agent caller wants it and it
-is bounded; phase 2 because it is the quality ceiling; phase 4 because it needs keys that
-must be tested deliberately; phase 5 last because it is only packaging.
+Recommended order: **2 → 4 (verification) → 5**. Phases 1, 3 and the code half of 4
+shipped in 0.1.1–0.2.0. What is left is the quality ceiling (phase 2), live verification
+of the adapters (phase 4, needs keys), and packaging (phase 5).
 
 ---
 

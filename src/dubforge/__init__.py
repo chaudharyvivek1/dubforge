@@ -5,13 +5,33 @@ Public surface:
     from dubforge import dub, plan, Settings
     result = dub("lesson.mp4", Settings(target_lang="hi", tts="sarvam"))
     print(result.qc["ok"], result.output)
+
+    # or as a background job an agent can poll
+    from dubforge import JobRunner
+    runner = JobRunner(Settings(target_lang="hi"))
+    job = runner.submit("lesson.mp4")
+    print(runner.wait(job.id).status)
 """
 
 from __future__ import annotations
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 from .config import Settings  # noqa: E402
-from .pipeline import DubError, DubPlan, DubResult, dub, plan  # noqa: E402
+from .jobs import Job, JobError, JobRunner, JobStore  # noqa: E402
+from .pipeline import DubCancelled, DubError, DubPlan, DubResult, dub, plan  # noqa: E402
 
-__all__ = ["Settings", "dub", "plan", "DubError", "DubPlan", "DubResult", "__version__"]
+__all__ = [
+    "Settings",
+    "dub",
+    "plan",
+    "DubError",
+    "DubCancelled",
+    "DubPlan",
+    "DubResult",
+    "Job",
+    "JobError",
+    "JobRunner",
+    "JobStore",
+    "__version__",
+]

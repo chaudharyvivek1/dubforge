@@ -87,6 +87,15 @@ class _OpenAICompatibleASR(ASRProvider):
     default_model = ""
     provider_name = ""
 
+    def probe(self) -> str | None:
+        from .http import probe_json
+
+        return probe_json(
+            f"{self.base_url}/models",
+            headers={"Authorization": f"Bearer {self.settings.provider_key(self.spec.name) or ''}"},
+            provider=self.provider_name,
+        )
+
     def transcribe(
         self, audio: str, language: str | None = None, diarize: bool = True
     ) -> Transcript:
@@ -187,6 +196,15 @@ class DeepgramASR(ASRProvider):
         notes="Diarisation is what keeps two actors from sharing one voice. ~$0.0043 per minute.",
         docs="https://developers.deepgram.com/docs/diarization",
     )
+
+    def probe(self) -> str | None:
+        from .http import probe_json
+
+        return probe_json(
+            "https://api.deepgram.com/v1/projects",
+            headers={"Authorization": f"Token {self.settings.provider_key('deepgram') or ''}"},
+            provider="deepgram",
+        )
 
     def transcribe(
         self, audio: str, language: str | None = None, diarize: bool = True
@@ -320,7 +338,7 @@ class TranscriptFileASR(ASRProvider):
         name="transcript",
         kind="asr",
         title="Reuse a transcript (JSON or SRT)",
-        capabilities=("diarize",),
+        capabilities=("reuse_transcript",),
         languages="n/a",
         verified=True,
         quality="Exactly as good as the transcript you supply — and free.",

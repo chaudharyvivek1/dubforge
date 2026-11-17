@@ -120,6 +120,27 @@ Only what a provider needs: the audio to the recogniser, the text to the transla
 line at a time to the voice. No telemetry, no dubforge server, no proxy. The offline
 stack sends nothing at all.
 
+### Can I submit a long job and check on it later?
+
+Yes. `dubforge_submit_job` (or `dubforge batch` from the CLI) queues the work and returns
+a job id; `dubforge_get_job_status` reports stage and progress, `dubforge_get_job_result`
+collects the paths and QC. Jobs survive a restart: a job whose process died comes back as
+`interrupted` — never as completed — and can be retried.
+
+### Can I cancel a run?
+
+`dubforge_cancel_job` / `dubforge jobs cancel <id>`. It is cooperative: the pipeline checks
+between stages and before each paid call, so the current line finishes and an ffmpeg run
+in progress is not killed. That is stated in the output rather than promised away.
+
+### What are the limits, and can I change them?
+
+Seven, all configurable in the environment or a settings file: input size (4 GiB), input
+duration (4 h), wall-clock run time (4 h), estimated cost ($25), concurrent jobs (2),
+retries per provider call (2), job retention (30 days). They refuse rather than warn, and
+the error names the variable to change — `DUBFORGE_MAX_ESTIMATED_USD=5` for a tight lab
+budget.
+
 ### Is there an API server?
 
 No, deliberately. `dubforge.dub()` is a library — wrap it in FastAPI or whatever your

@@ -73,10 +73,29 @@ Three inputs change the output more than the voice choice:
 * `style` — register and delivery. *"warm, unhurried teacher, आप-form"*. This reaches
   the translator as well as the voice, which is the point.
 
-### 5. Dub — `dub_video`
-Long files are long. Say roughly how long before you start (audio duration × 1–3 for
-local engines, faster for APIs), and prefer `dry_run: true` first on an unfamiliar
-file.
+### 5. Dub — `dub_video`, or `dubforge_submit_job` for anything long
+`dub_video` blocks until the dub is finished. For a long file use `dubforge_submit_job`,
+which returns a job id immediately, then poll `dubforge_get_job_status` (status, stage,
+progress, elapsed) and collect with `dubforge_get_job_result` (paths, QC, `providers_used`).
+
+```
+dubforge_submit_job → {"job": {"job_id": "lecture-a1b2c3d4", "status": "queued"}}
+dubforge_get_job_status → {"job": {"status": "processing", "stage": "synthesise", "progress": 0.45}}
+dubforge_get_job_result → {"output": "...", "qc": {...}, "providers_used": {...}}
+```
+
+* Cancellation is **cooperative**: `dubforge_cancel_job` is checked between stages and
+  before each paid call. Say that plainly; do not imply an in-flight request is killed.
+* A job left `interrupted` (its process died) can be re-queued with
+  `dubforge_retry_job`, within the configured retry budget.
+* `dubforge_list_jobs` is paginated and newest-first; pass `status` to filter.
+
+### 5a. Know the limits before you queue
+`dubforge_get_capabilities` answers what this install can do; `dubforge_estimate_cost`
+answers what a run would cost at list prices and whether the configured limits allow it.
+Limits are refusals, not warnings: input size, input duration, wall-clock run time,
+estimated cost, concurrent jobs. A `limit_exceeded` error names the setting to change —
+report it to the user instead of retrying.
 
 ### 6. Read the QC, then report
 `qc_summary` is the one-screen verdict. Report it as it is:
@@ -103,6 +122,11 @@ If `qc.ok` is false:
 | `every_line_has_audio` | synthesis failed for some lines | read `warnings`; usually a key, a voice id or a rate limit |
 | `no_empty_lines` | the translator returned nothing for a line | re-run; if it persists, that line's source may be music-only |
 
+Job-level states worth knowing: `interrupted` means the process running the job died — it
+is never a completed dub; `failed` carries `error_kind` (`auth`, `rate_limit`, `timeout`,
+`network`, `bad_request`, `not_found`, `server`), which tells you whether a retry is worth
+it. `rate_limit` and `timeout` are; `auth` and `bad_request` are not.
+
 Warnings (loudness, headroom, duration, background) do not block delivery but must be
 mentioned: "the music bed could not be separated on this mono source, so the original
 dialogue is faintly under the dub."
@@ -127,4 +151,5 @@ Offer a re-run with changes rather than claiming perfection.
 * `references/providers.md` — every adapter, when to pick it, what it costs, its gotchas.
 * `references/quality.md` — the timing model, the QC checks, the tuning table.
 * `references/prompts.md` — briefs and glossary patterns that measurably improve output.
+* `references/jobs.md` — the job tools, the lifecycle, cancellation and cleanup.
 * `references/troubleshooting.md` — error messages and what they actually mean.

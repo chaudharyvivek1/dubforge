@@ -2,6 +2,106 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.2.0] — 2026-11-17
+
+The job engine release. An agent can now submit work, watch it, cancel it, retry it and
+collect the result — without a database, a queue server or a daemon. Every existing CLI
+command, Python API and MCP tool keeps its name and behaviour.
+
+### Added — job engine (`jobs.py`)
+
+* **Persistent jobs.** One JSON document per job in `<workdir>/registry/<job-id>.json`,
+  written atomically. The id is derived from the source *path*, so submitting the same
+  file twice returns the same job instead of starting a second dub.
+* **Lifecycle.** `queued → validating → processing → quality_check → completed`, with
+  `failed`, `cancelled` and `interrupted` as terminal states. `interrupted` is derived:
+  a job whose pid is gone (or whose heartbeat is stale) is reported as interrupted and
+  **never** as completed.
+* **Recovery.** `JobStore.recover()` reconciles every job on disk at startup; a job left
+  by a killed process is marked interrupted with a reason, not silently retried.
+* **Background execution.** `JobRunner` is a bounded thread pool (`max_concurrent_jobs`),
+  not a queue server. Duplicate submission of a running job is refused; a finished job
+  re-submitted is a new attempt.
+* **Cooperative cancellation.** `pipeline.dub(cancel=…)` checks between stages and
+  before every paid call. Honest limits, documented: a line being synthesised finishes,
+  and an ffmpeg run in progress is not killed.
+* **Progress.** `pipeline.dub(progress=…)` reports stage and step counts, which is what
+  the job document shows.
+
+### Added — MCP tools (10 → 21)
+
+`dubforge_submit_job`, `dubforge_get_job_status`, `dubforge_get_job_result`,
+`dubforge_list_jobs` (paginated), `dubforge_cancel_job`, `dubforge_retry_job`,
+`dubforge_cleanup_jobs` (dry run by default), `dubforge_get_capabilities`,
+`dubforge_validate_config`, `dubforge_check_provider_health`,
+`dubforge_estimate_cost`. `dubforge_analyze_video` was **not** added: `probe_media` plus
+`plan_dub` already answer it, and a duplicate tool is a worse contract than a missing one.
+
+### Added — intelligence
+
+* **`capabilities.py`** — one derived answer to "what can this install do": stages,
+  providers with readiness and verification, features (diarisation, cloning, separation,
+  lip sync, duration-aware translation), formats, optional dependencies and limits.
+  `doctor`, `providers`, the CLI and the MCP tool all read it, so they cannot disagree.
+  A stub provider never makes a feature "supported".
+* **`limits.py`** — refusals, not warnings: `max_input_bytes`, `max_input_seconds`,
+  `max_run_seconds`, `max_estimated_usd`, `max_concurrent_jobs`, `max_retries`,
+  `job_retention_days`. Checked in `plan()` before the first paid call, and between
+  stages while running. Each failure names the setting to change.
+* **`batch.py`** — a folder of files through the same pipeline: failure isolation,
+  resume (a completed, QC-passing output is skipped), outputs written to
+  `<workdir>/out/`, aggregate estimate, and no source-file overwrite.
+
+### Added — provider reliability
+
+* **Failure classification.** Every HTTP failure is `auth`, `rate_limit`, `timeout`,
+  `network`, `bad_request`, `not_found`, `server` or `unknown`, with a `retryable` flag.
+  `Retry-After` is honoured instead of a guessed backoff.
+* **Health checks.** `Provider.health(live=True)` makes one cheap authenticated call for
+  the adapters that have a free endpoint (OpenAI, ElevenLabs, Groq, Deepgram, DeepL,
+  Ollama, edge-tts) and says "no cheap probe" for the rest. `live=False` never touches
+  the network.
+* **Opt-in fallback.** `--fallback` / `DUBFORGE_FALLBACK` walks the provider chain when a
+  stage fails. It is announced in the warnings ("different quality and cost"), the voices
+  are re-mapped if the voice provider changed, and the transcript is not cached under a
+  provider that did not produce it.
+* **Actual providers recorded.** `providers_used` is written to the job document, the
+  manifest and `report.md`, separately from the providers that were requested.
+
+### Added — CLI
+
+`dubforge capabilities`, `dubforge validate-config`, `dubforge jobs list|show|cancel|
+retry|cleanup` (cleanup is a dry run unless `--yes`), `dubforge batch <folder|file>`.
+All of them support `--json`.
+
+### Changed behaviour
+
+* `dubforge doctor` now prints features and limits, from the same source as
+  `capabilities`.
+* A job document lives beside the workspace manifest; the manifest keeps its own job.
+* New settings (all optional, all validated): the seven limits above plus `fallback`.
+
+### Tests
+
+235 → 309. New: lifecycle transitions, atomic job writes, restart recovery, interrupted
+vs failed, cancellation of queued and running jobs, retry budget, pagination, cleanup
+boundaries, duplicate submission, every limit (bytes, duration, runtime, estimate), limit
+overrides from the environment, capabilities derived from the registry, a stub not making
+a feature supported, doctor/capabilities agreement, batch failure isolation and resume,
+output paths outside the input folder, cancellation mid-pipeline, progress reporting,
+opt-in fallback with an announcement, provider classification, health without a network
+call, and the eleven new MCP tools including a submit → status → result round trip.
+
+### Known limitations
+
+* Cancellation is cooperative; provider requests and ffmpeg runs in flight are not
+  interrupted.
+* Network adapters remain `verified: false`; `live=true` health checks prove a credential
+  works, not that a model's output is good.
+* No URL ingestion, no REST server, no distributed workers — see `docs/assessment.md`.
+* Segment-level regeneration, target-language alignment and subtitle readability are
+  designed in `docs/assessment.md`, not implemented.
+
 ## [0.1.2] — 2026-11-18
 
 Second audit: concurrency, configuration and release hardening. No public API, CLI

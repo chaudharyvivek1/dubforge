@@ -10,9 +10,11 @@ import argparse
 import contextlib
 import json
 import sys
+from pathlib import Path
 
-from . import __version__, demo, doctor, ffmpeg, pipeline, qc, srt
+from . import __version__, batch, capabilities, demo, doctor, ffmpeg, limits, pipeline, qc, srt
 from .config import ConfigError, Settings
+from .jobs import JobError, JobStore
 from .media import Transcript
 from .providers import registry
 from .providers.base import ProviderError, ProviderUnavailable
@@ -241,6 +243,173 @@ def cmd_srt(args) -> int:
     return EXIT_OK
 
 
+def cmd_capabilities(args) -> int:
+    settings = _settings(args)
+    if args.json:
+        _emit_json(capabilities.snapshot(settings))
+    else:
+        print(capabilities.text(settings))
+    return EXIT_OK
+
+
+def cmd_validate_config(args) -> int:
+    """Check a settings file and the environment without starting any work."""
+    try:
+        settings = _settings(args)
+    except ConfigError as exc:
+        print(f"dubforge: configuration error\n{exc}", file=sys.stderr)
+        return EXIT_ERROR
+    problems = settings.validate() + list(settings.env_warnings)
+    payload = {
+        "ok": not problems,
+        "problems": problems,
+        "config": args.config or None,
+        "effective": {
+            "target_lang": settings.target_lang,
+            "source_lang": settings.source_lang,
+            "max_speed": settings.max_speed,
+            "keep_background": settings.keep_background,
+            "fallback": settings.fallback,
+            "limits": limits.describe(settings),
+        },
+    }
+    if args.json:
+        _emit_json(payload)
+    elif problems:
+        print("configuration problems:")
+        for problem in problems:
+            print(f"  - {problem}")
+    else:
+        print("configuration ok")
+        print(limits.summary(settings))
+    return EXIT_OK if not problems else EXIT_ERROR
+
+
+def cmd_jobs(args) -> int:
+    settings = _settings(args)
+    store = JobStore(settings.workdir)
+    action = args.action
+
+    if action == "list":
+        jobs, total = store.list(status=args.status or None, limit=args.limit, offset=args.offset)
+        if args.json:
+            _emit_json(
+                {"total": total, "returned": len(jobs), "jobs": [job.summary() for job in jobs]}
+            )
+            return EXIT_OK
+        if not jobs:
+            print(f"no jobs in {settings.workdir}")
+            return EXIT_OK
+        print(f"{'job':<28} {'status':<11} {'qc':<5} {'progress':>8}  target  source")
+        for job in jobs:
+            qc_flag = "—" if job.qc_ok is None else ("pass" if job.qc_ok else "FAIL")
+            print(
+                f"{job.id:<28} {job.status:<11} {qc_flag:<5} {job.progress:>7.0%}  "
+                f"{job.target_lang:<7} {Path(job.source).name}"
+            )
+        print(f"\n{len(jobs)} of {total} job(s) — --offset to page")
+        return EXIT_OK
+
+    if action in ("show", "cancel", "retry"):
+        if not args.job_id:
+            print(f"dubforge: jobs {action} needs a job id", file=sys.stderr)
+            return EXIT_ERROR
+        if action == "show":
+            job = store.get(args.job_id)
+            if job is None:
+                print(f"dubforge: no job {args.job_id!r}", file=sys.stderr)
+                return EXIT_ERROR
+            if args.json:
+                _emit_json(
+                    {
+                        "job": job.summary(),
+                        "result": {
+                            "output": job.output,
+                            "audio": job.audio,
+                            "qc": job.qc,
+                            "subtitles": job.subtitles,
+                            "providers_used": job.providers_used,
+                            "warnings": job.warnings,
+                            "error": job.error,
+                        },
+                    }
+                )
+                return EXIT_OK if job.status == "completed" and job.qc_ok else EXIT_QC_FAILED
+            print(json.dumps(job.summary(), indent=2))
+            if job.error:
+                print(f"error: {job.error}")
+            if job.qc:
+                print()
+                print(qc.summary(job.qc))
+            return EXIT_OK if job.status == "completed" and job.qc_ok else EXIT_QC_FAILED
+
+        try:
+            if action == "cancel":
+                job = store.request_cancel(args.job_id)
+                print(f"{job.id}: {job.status}")
+                if not job.terminal:
+                    print("cooperative: a line in flight finishes; ffmpeg is not killed")
+                return EXIT_OK
+            job = store.retry(args.job_id, max_retries=settings.max_retries)
+        except JobError as exc:
+            print(f"dubforge: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        print(f"{job.id}: {job.status} (attempt {job.attempts})")
+        print("run `dubforge jobs show " + job.id + "` to follow it")
+        return EXIT_OK
+
+    if action == "cleanup":
+        result = store.cleanup(
+            older_than_days=args.older_than or None,
+            dry_run=not args.yes,
+        )
+        if args.json:
+            _emit_json(result)
+            return EXIT_OK
+        verb = "would remove" if result["dry_run"] else "removed"
+        print(f"{verb} {len(result['removed'])} job(s), kept {result['kept']}")
+        for job_id in result["removed"][:20]:
+            print(f"  {job_id}")
+        if result["dry_run"] and result["removed"]:
+            print("re-run with --yes to delete")
+        return EXIT_OK
+
+    print(f"dubforge: unknown jobs action {action!r}", file=sys.stderr)
+    return EXIT_ERROR
+
+
+def cmd_batch(args) -> int:
+    settings = _settings(args)
+    try:
+        sources = batch.collect_sources(
+            args.target, recursive=not args.no_recursive, store=JobStore(settings.workdir)
+        )
+    except FileNotFoundError as exc:
+        print(f"dubforge: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    if not sources:
+        print(f"dubforge: no media files in {args.target}", file=sys.stderr)
+        return EXIT_ERROR
+    result = batch.run_batch(
+        sources,
+        settings,
+        force=args.force,
+        stop_on_error=args.stop_on_error,
+        estimate=args.estimate,
+        log=None if args.json else print,
+    )
+    if args.json:
+        _emit_json(result.to_dict())
+    else:
+        print()
+        print(result.table())
+        if args.estimate and result.estimates.get("total_usd") is not None:
+            print(
+                f"estimated total: ${result.estimates['total_usd']:.2f} (list prices, not a quote)"
+            )
+    return EXIT_OK if result.ok else EXIT_QC_FAILED
+
+
 def cmd_mcp(args) -> int:
     from . import server
 
@@ -307,6 +476,42 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", default=".")
     p.add_argument("--stem", default="dub")
     p.set_defaults(func=cmd_srt)
+
+    p = sub.add_parser("capabilities", help="what this install can do, in JSON or prose")
+    common(p)
+    p.set_defaults(func=cmd_capabilities)
+
+    p = sub.add_parser("validate-config", help="check a settings file and the environment")
+    common(p)
+    p.set_defaults(func=cmd_validate_config)
+
+    p = sub.add_parser("jobs", help="list, inspect, cancel, retry or clean up jobs")
+    common(p)
+    p.add_argument("action", choices=["list", "show", "cancel", "retry", "cleanup"])
+    p.add_argument("job_id", nargs="?", help="job id, for show/cancel/retry")
+    p.add_argument(
+        "--status", help="filter: queued, processing, completed, failed, cancelled, interrupted"
+    )
+    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--older-than", type=int, default=0, help="cleanup: only jobs older than N days")
+    p.add_argument(
+        "--yes", action="store_true", help="cleanup: actually delete (default is a dry run)"
+    )
+    p.set_defaults(func=cmd_jobs)
+
+    p = sub.add_parser("batch", help="dub a folder (or a list of files) through the same pipeline")
+    common(p)
+    p.add_argument("target", help="folder of media files, or a single file")
+    _language_args(p)
+    _quality_args(p)
+    p.add_argument("--force", action="store_true", help="re-dub files that already passed QC")
+    p.add_argument(
+        "--stop-on-error", action="store_true", help="stop the batch on the first failure"
+    )
+    p.add_argument("--estimate", action="store_true", help="also estimate the cost per file")
+    p.add_argument("--no-recursive", action="store_true", help="do not descend into sub-folders")
+    p.set_defaults(func=cmd_batch)
 
     p = sub.add_parser("mcp", help="run the MCP server on stdio")
     p.set_defaults(func=cmd_mcp)

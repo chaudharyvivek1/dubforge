@@ -286,3 +286,84 @@ def test_edge_tts_looks_up_a_real_default_voice(monkeypatch, tmp_path):
     with pytest.raises(Exception) as exc:
         provider._default_voice()
     assert "voice-pool" in str(exc.value)
+
+
+# ------------------------------------------------------- reliability (0.2.0)
+
+
+def test_status_codes_are_classified_consistently():
+    from dubforge.providers.http import classify
+
+    assert classify(429) == ("rate_limit", True)
+    assert classify(401) == ("auth", False)
+    assert classify(403) == ("auth", False)
+    assert classify(400) == ("bad_request", False)
+    assert classify(404) == ("not_found", False)
+    assert classify(503) == ("server", True)
+    assert classify(599) == ("server", True)
+    assert classify(418) == ("unknown", False)
+
+
+def test_provider_errors_carry_a_kind_and_retryability():
+    from dubforge.providers.base import ProviderError
+
+    error = ProviderError("nope", kind="rate_limit", status=429, retryable=True)
+    assert error.to_dict()["kind"] == "rate_limit"
+    assert error.to_dict()["retryable"] is True
+    assert ProviderError("plain").kind == "unknown"
+
+
+def test_health_without_live_makes_no_network_call(monkeypatch):
+    """`live=False` must be safe to call on a plane."""
+    from dubforge.providers import http
+
+    def explode(*args, **kwargs):
+        raise AssertionError("health(live=False) made a network call")
+
+    monkeypatch.setattr(http, "get", explode)
+    provider = registry.create("asr", "deepgram", Settings())
+    report = provider.health(live=False)
+    assert report["live"] is None
+    assert "readiness only" in report["detail"]
+
+
+def test_health_live_reports_a_missing_key_without_calling(monkeypatch):
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+    provider = registry.create("asr", "deepgram", Settings())
+    report = provider.health(live=True)
+    assert report["ready"] is False
+    assert report["live"] is False
+    assert "DEEPGRAM_API_KEY" in report["detail"]
+
+
+def test_health_live_turns_a_failure_into_a_report(monkeypatch):
+    from dubforge.providers import http
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    def fail(*args, **kwargs):
+        from dubforge.providers.base import ProviderError
+
+        raise ProviderError("bad key", kind="auth", status=401)
+
+    monkeypatch.setattr(http, "probe_json", fail)
+    from dubforge.providers import tts as tts_module
+
+    monkeypatch.setattr(tts_module, "probe_json", fail, raising=False)
+    provider = tts_module.OpenAITTS(Settings())
+    report = provider.health(live=True)
+    assert report["live"] is False
+    assert "auth" in report["detail"]
+
+
+def test_the_chain_is_ordered_and_named_providers_are_singletons():
+    chain = registry.resolve_chain("separator", Settings())
+    assert [p.name for p in chain] == ["ffmpeg_center", "none"]
+    single = registry.resolve_chain("tts", Settings(), "stub")
+    assert len(single) == 1 and single[0].name == "stub"
+
+
+def test_a_named_provider_that_is_not_ready_is_refused_not_skipped():
+    with pytest.raises(Exception) as exc:
+        registry.resolve_chain("asr", Settings(), "deepgram")
+    assert "DEEPGRAM_API_KEY" in str(exc.value)

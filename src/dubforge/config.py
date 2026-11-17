@@ -95,6 +95,20 @@ class Settings:
     keep_work: bool = True
     timeout_s: int = 600  # per provider HTTP call
 
+    # --- resource, cost and concurrency limits --------------------------------
+    # Every one of these is a refusal, not a warning: they exist so an agent cannot
+    # accidentally start a four-hour job or a fifty-dollar one.
+    max_input_bytes: int = 4 * 1024**3  # 4 GiB
+    max_input_seconds: float = 4 * 3600.0  # 4 hours
+    max_run_seconds: float = 4 * 3600.0  # 4 hours of wall clock
+    max_estimated_usd: float = 25.0  # estimate ceiling, from list prices
+    max_concurrent_jobs: int = 2
+    max_retries: int = 2  # per provider HTTP call
+    job_retention_days: int = 30
+
+    # --- provider reliability -------------------------------------------------
+    fallback: bool = False  # opt-in: try the next provider on failure
+
     # --- diagnostics (filled by from_env; never set by hand) -------------------
     env_warnings: list[str] = field(default_factory=list)
 
@@ -175,6 +189,13 @@ class Settings:
             ("voice_gain_db", self.voice_gain_db, -60.0, 12.0),
             ("max_segment_s", self.max_segment_s, 1.0, 120.0),
             ("timeout_s", self.timeout_s, 5, 3600),
+            ("max_input_bytes", self.max_input_bytes, 1, 1 << 40),
+            ("max_input_seconds", self.max_input_seconds, 1.0, 24 * 3600.0),
+            ("max_run_seconds", self.max_run_seconds, 1.0, 24 * 3600.0),
+            ("max_estimated_usd", self.max_estimated_usd, 0.0, 10000.0),
+            ("max_concurrent_jobs", self.max_concurrent_jobs, 1, 16),
+            ("max_retries", self.max_retries, 0, 10),
+            ("job_retention_days", self.job_retention_days, 1, 3650),
         ):
             if not low <= value <= high:
                 problems.append(f"{name}={value} is outside {low}–{high}")

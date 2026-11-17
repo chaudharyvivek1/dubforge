@@ -78,6 +78,32 @@ Voices are assigned per speaker in the order you give them:
 | `none` | — | Default. The picture is untouched. |
 | `synclabs` | `SYNCLABS_API_KEY` | Sync-2. Needs public HTTP(S) URLs for both inputs; dubforge will not upload your footage for you. Quote-based pricing. |
 
+## Health, failure classification and fallback (0.2.0)
+
+Every HTTP failure is classified once, in `providers/http.py`:
+
+| status | kind | retryable |
+|---|---|---|
+| 400 / 422 | `bad_request` | no |
+| 401 / 403 | `auth` | no |
+| 404 | `not_found` | no |
+| 429 | `rate_limit` | yes, honouring `Retry-After` |
+| 5xx | `server` / `timeout` | yes |
+| connection error | `network` | yes |
+
+`ProviderError` carries that `kind`, the status and a `retryable` flag, so a caller can
+decide without parsing prose. `Provider.health(live=False)` reports readiness only and
+never touches the network; `live=True` makes one cheap authenticated call where an adapter
+has a free endpoint — OpenAI, ElevenLabs, Groq, Deepgram, DeepL, Ollama and edge-tts do;
+the others say "no cheap probe" rather than pretending.
+
+`--fallback` (or `DUBFORGE_FALLBACK=1`) walks `registry.resolve_chain(kind)` when a stage
+fails. It is **off by default**, every switch is announced in the run's warnings
+("different quality and cost"), voices are re-mapped when the voice provider changes, and
+a transcript produced by a fallback provider is not cached under the requested one's key.
+`providers_used` in the job document, the manifest and `report.md` records what actually
+ran.
+
 ## Writing a provider
 
 ```python

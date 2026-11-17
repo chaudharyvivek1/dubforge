@@ -70,7 +70,12 @@ jobs:
 
           EXPECTED = {"dubforge_doctor", "list_providers", "probe_media", "plan_dub",
                       "transcribe_video", "dub_video", "get_qc", "list_voices",
-                      "write_subtitles", "dubforge_version"}
+                      "write_subtitles", "dubforge_version", "dubforge_submit_job",
+                      "dubforge_get_job_status", "dubforge_get_job_result",
+                      "dubforge_list_jobs", "dubforge_cancel_job", "dubforge_retry_job",
+                      "dubforge_cleanup_jobs", "dubforge_get_capabilities",
+                      "dubforge_validate_config", "dubforge_check_provider_health",
+                      "dubforge_estimate_cost"}
 
           async def main():
               async with Client(build_server()) as client:
@@ -150,7 +155,12 @@ jobs:
 
           EXPECTED = {"dubforge_doctor", "list_providers", "probe_media", "plan_dub",
                       "transcribe_video", "dub_video", "get_qc", "list_voices",
-                      "write_subtitles", "dubforge_version"}
+                      "write_subtitles", "dubforge_version", "dubforge_submit_job",
+                      "dubforge_get_job_status", "dubforge_get_job_result",
+                      "dubforge_list_jobs", "dubforge_cancel_job", "dubforge_retry_job",
+                      "dubforge_cleanup_jobs", "dubforge_get_capabilities",
+                      "dubforge_validate_config", "dubforge_check_provider_health",
+                      "dubforge_estimate_cost"}
 
           async def main():
               async with Client(build_server()) as client:

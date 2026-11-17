@@ -139,6 +139,40 @@ long encode: a 40-minute video is muxed in seconds.
 severity `fail` fails, and the CLI then exits 1. See
 [quality.md](quality.md#the-checks).
 
+## Jobs (0.2.0)
+
+```
+<workdir>/
+  registry/<job-id>.json          one document per job, atomic writes
+  jobs/<stem>-<pathhash>/         the job's workspace (see below)
+```
+
+```
+queued ──► validating ──► processing ──► quality_check ──► completed
+                                │
+                                ├──► failed        (an error was raised)
+                                ├──► cancelled     (a caller asked it to stop)
+                                └──► interrupted   (its process died; derived, never guessed)
+```
+
+The design decisions worth knowing:
+
+* **A job is a file, not a row.** No database, no broker, no daemon. `JobStore` reads and
+  writes JSON atomically; `JobRunner` is a bounded thread pool. A restart is recovered by
+  reconciling `processing` jobs against their pid and heartbeat.
+* **The job id is the source path.** `<stem>-<pathhash>` — the same identity the
+  workspace uses. Submitting a file twice returns the running job, and a job's artefacts
+  are always in the directory its document names.
+* **`interrupted` is derived, not stored hopefully.** A job with a dead pid (or a stale
+  heartbeat, which is all Windows allows) becomes `interrupted` on read. It is never
+  reported as completed.
+* **Cancellation is cooperative.** `pipeline.dub(cancel=…)` is consulted between stages
+  and before every paid call. An ffmpeg run in progress is not killed; the next boundary
+  is the next line of dialogue at worst. This is stated in the tool output rather than
+  promised away.
+* **Duplicate execution is refused in-process** by the runner's in-flight set, and across
+  processes by the workspace lock the pipeline already takes.
+
 ## Files on disk
 
 ```
@@ -200,7 +234,13 @@ a matching spec, a title and a quality note, and no spec may leak a secret.
 * **Identity is content, not metadata.** Cache keys hash bytes. Anything keyed by a
   filename is a collision waiting for the second file with that name.
 * **Destructive operations re-check their boundary.** Cleanup resolves every path and
-  refuses anything outside the job directory, including through a symlink.
+  refuses anything outside the job directory, including through a symlink. Job cleanup
+  validates the job id before touching the filesystem and only deletes directories under
+  `<workdir>/jobs/`.
+* **A refusal beats a warning.** Limits (size, duration, runtime, cost) stop a run with
+  the setting to change; a limit is never silently disabled.
+* **Never silently switch providers.** Fallback is opt-in, announced in the warnings, and
+  the provider that actually ran is recorded separately from the one requested.
 * **Fail loudly, continue cheaply.** A missing bed or a failed line is a warning; a
   missing key or an untranslated dub is an error. Never a silent success.
 * **Measure, don't assume.** Every duration that matters is measured with ffmpeg

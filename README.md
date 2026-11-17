@@ -3,10 +3,10 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-235%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-309%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-10%20tools-6f42c1)](src/dubforge/server.py)
+[![MCP](https://img.shields.io/badge/MCP-21%20tools-6f42c1)](src/dubforge/server.py)
 [![demo offline](https://img.shields.io/badge/demo-no%20key%2C%20no%20network-orange)](#try-it-in-one-command)
 
 **Dub any video into any language — with several AI providers in one pipeline that
@@ -36,6 +36,8 @@ report — so you can see the machine work before you spend a rupee on it.
 [Install](#install) ·
 [Dub something](#dub-something) ·
 [From an agent](#use-it-from-an-agent) ·
+[Jobs](#jobs-submit-watch-cancel-collect) ·
+[Limits](#limits-capabilities-and-cost) ·
 [Quality levers](#the-quality-levers-in-the-order-they-matter) ·
 [Providers](#providers) ·
 [Languages](#languages) ·
@@ -162,13 +164,61 @@ own directory: `manifest.json` records which steps finished.
 }
 ```
 
-Ten tools, and the intended order is in the server's instructions:
-`dubforge_doctor` → `plan_dub` → `dub_video` → read `qc`. Transcripts come back as
+Twenty-one tools, and the intended order is in the server's instructions:
+`dubforge_doctor` → `plan_dub` → `dub_video` (or `dubforge_submit_job` for anything long)
+→ read `qc`. Transcripts come back as
 a path and a five-line preview, never as a wall of text.
 
 There is also an agent skill in [`skill/SKILL.md`](skill/SKILL.md) — the workflow,
 the failure modes, and the prompts that actually keep a translation inside its time
 budget.
+
+## Jobs: submit, watch, cancel, collect
+
+A long dub should not be one blocking tool call. `dubforge 0.2.0` adds a job engine built
+on the workspace that was already there — a JSON document per job, a bounded thread pool,
+and no database:
+
+```bash
+dubforge dub lecture.mp4 --to hi            # still synchronous, still the same flags
+dubforge batch lessons/ --to hi --estimate  # a folder, one job per file, failures isolated
+dubforge jobs list                          # newest first, paginated
+dubforge jobs show lecture-a1b2c3d4         # status, QC, where it got to
+dubforge jobs cancel lecture-a1b2c3d4       # cooperative, checked between stages
+dubforge jobs cleanup --older-than 30       # dry run unless you pass --yes
+```
+
+```
+queued → validating → processing → quality_check → completed
+                            ↘ failed   ↘ cancelled   ↘ interrupted
+```
+
+* **`interrupted` is a real state.** A job whose process died is reported as interrupted
+  — never as completed — and `recover()` reconciles the registry on startup.
+* **One job per source path.** Submitting the same file twice returns the job already
+  running instead of starting a second dub.
+* **Cancellation is cooperative and honest about it:** checked between stages and before
+  every paid call, so a line in flight finishes and ffmpeg is not killed mid-write.
+* **`providers_used`** records what actually ran, separately from what you asked for —
+  because with `--fallback` those are not always the same.
+
+From an agent, the same thing over MCP: `dubforge_submit_job` → `dubforge_get_job_status`
+→ `dubforge_get_job_result`, with `dubforge_cancel_job`, `dubforge_retry_job` and
+`dubforge_list_jobs` alongside.
+
+## Limits, capabilities and cost
+
+```bash
+dubforge capabilities        # what this install can do, derived from the adapters
+dubforge validate-config     # check a settings file without starting work
+dubforge plan lecture.mp4 --to hi   # cost, providers, timing budget, blockers
+```
+
+Seven limits are refusals, not warnings — checked before the first paid call and again
+between stages: `max_input_bytes` (4 GiB), `max_input_seconds` (4 h), `max_run_seconds`
+(4 h), `max_estimated_usd` ($25), `max_concurrent_jobs` (2), `max_retries` (2),
+`job_retention_days` (30). Set them in the environment (`DUBFORGE_MAX_ESTIMATED_USD=5`)
+or in a settings file; each failure names the setting to change.
 
 ## The quality levers, in the order they matter
 
@@ -272,6 +322,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [ROADMAP.md](ROADMAP.md) | what is next, and what is explicitly not planned |
 | [CREDITS.md](CREDITS.md) | every project and vendor this stands on, with licences |
 | [CHANGELOG.md](CHANGELOG.md) | what changed, and the known limitations of each release |
+| [docs/release-0.2.0.md](docs/release-0.2.0.md) | the release checklist: scope, compatibility, verification, manual steps |
 
 ## Repository layout
 
@@ -290,6 +341,10 @@ src/dubforge/
   cli.py           doctor · providers · voices · plan · dub · demo · srt · mcp
   server.py        the MCP server (10 tools), validation and structured errors
   workspace.py     job directories, locks, the shared transcript cache, safe cleanup
+  jobs.py          job documents, lifecycle, recovery, the background runner
+  capabilities.py  what this install can do, derived from the adapters
+  limits.py        resource and cost refusals, checked before anything is spent
+  batch.py         a folder of files through the same pipeline
   pricing.py       indicative list prices, with sources, for `plan`
   providers/       one module per stage + registry.py (what exists, what `auto` picks)
 tests/             56 tests; the ffmpeg ones skip themselves when ffmpeg is absent

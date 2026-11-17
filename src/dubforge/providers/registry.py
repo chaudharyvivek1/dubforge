@@ -102,15 +102,23 @@ def create(kind: str, name: str, settings: Settings | None = None) -> Provider:
     return cls(settings)
 
 
-def resolve(kind: str, settings: Settings | None = None, requested: str | None = None) -> Provider:
-    """`auto` → the first available provider in quality order; otherwise the named one."""
+def resolve_chain(
+    kind: str, settings: Settings | None = None, requested: str | None = None
+) -> list[Provider]:
+    """Every provider that could run this stage, best first.
+
+    A named provider yields a chain of one. `auto` yields every *ready* provider in
+    quality order, which is what makes an opt-in fallback possible without a second
+    registry and without changing what `resolve` returns.
+    """
     settings = settings or Settings()
     want = (requested or getattr(settings, _field(kind), "auto") or "auto").strip()
     if want and want != "auto":
         provider = create(kind, want, settings)
         provider.require()
-        return provider
+        return [provider]
 
+    ready: list[Provider] = []
     tried: list[str] = []
     for name in AUTO.get(kind, []):
         try:
@@ -121,7 +129,10 @@ def resolve(kind: str, settings: Settings | None = None, requested: str | None =
         if gaps:
             tried.append(f"{name}: {gaps[0]}")
             continue
-        return provider
+        ready.append(provider)
+    if ready:
+        return ready
+
     hint = (
         f"no {kind} provider is ready. Tried: "
         + ("; ".join(tried) if tried else "nothing")
@@ -141,6 +152,11 @@ def resolve(kind: str, settings: Settings | None = None, requested: str | None =
         + "\nRun `dubforge doctor` for the full picture."
     )
     raise ProviderUnavailable(hint)
+
+
+def resolve(kind: str, settings: Settings | None = None, requested: str | None = None) -> Provider:
+    """`auto` → the first available provider in quality order; otherwise the named one."""
+    return resolve_chain(kind, settings, requested)[0]
 
 
 def _field(kind: str) -> str:

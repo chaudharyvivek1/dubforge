@@ -121,6 +121,11 @@ class ElevenLabsTTS(TTSProvider):
     def _headers(self) -> dict[str, str]:
         return {"xi-api-key": self.settings.provider_key("elevenlabs") or ""}
 
+    def probe(self) -> str | None:
+        from .http import probe_json
+
+        return probe_json(f"{self.base}/voices", headers=self._headers(), provider="elevenlabs")
+
     def voices(self, language: str = "") -> list[Voice]:
         if not self.available:
             return []
@@ -194,6 +199,15 @@ class OpenAITTS(TTSProvider):
         "where --style ends up.",
         docs="https://platform.openai.com/docs/guides/text-to-speech",
     )
+
+    def probe(self) -> str | None:
+        from .http import probe_json
+
+        return probe_json(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {self.settings.provider_key('openai') or ''}"},
+            provider="openai",
+        )
 
     VOICES = (
         "alloy",
@@ -380,6 +394,10 @@ class EdgeTTS(TTSProvider):
         "commercial use. pip install edge-tts",
         docs="https://github.com/rany2/edge-tts",
     )
+
+    def probe(self) -> str | None:
+        voices = self.voices(self.settings.target_lang)
+        return f"listed {len(voices)} voices" if voices else None
 
     def voices(self, language: str = "") -> list[Voice]:
         try:

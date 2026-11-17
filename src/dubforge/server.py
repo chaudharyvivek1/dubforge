@@ -10,9 +10,9 @@ failure comes back as the same shape::
 
     {"ok": false, "error": {"code": "missing_file", "message": "...", "hint": "..."}}
 
-`code` is stable and machine-readable (`invalid_argument`, `missing_file`,
-`unsupported_media`, `no_provider`, `provider_error`, `io_error`, `internal_error`), so
-an agent can decide what to do without parsing prose. No message ever contains a key:
+`code` is stable and machine-readable (`invalid_argument`, `limit_exceeded`,
+`missing_file`, `unsupported_media`, `no_provider`, `provider_error`, `io_error`,
+`internal_error`), so an agent can decide what to do without parsing prose. No message ever contains a key:
 `dubforge doctor` reports whether a variable is set, never its value.
 
 Tool names are part of the public surface and do not change.
@@ -29,8 +29,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import __version__, doctor, ffmpeg, pipeline, qc, srt
-from .config import Settings, is_language_code
+from . import __version__, capabilities, doctor, ffmpeg, limits, pipeline, qc, srt
+from .config import ConfigError, Settings, is_language_code
+from .jobs import JobError, JobRunner, JobStore
 from .media import Transcript
 from .providers import registry
 from .providers.base import ProviderError, ProviderUnavailable
@@ -57,6 +58,7 @@ MEDIA_SUFFIXES = {
 
 ERROR_CODES = (
     "invalid_argument",
+    "limit_exceeded",
     "missing_file",
     "unsupported_media",
     "no_provider",
@@ -100,6 +102,10 @@ def guard(fn):
             return fn(*args, **kwargs)
         except ToolError as exc:
             return _err(exc.code, exc.message, exc.hint)
+        except limits.LimitExceeded as exc:
+            return _err("limit_exceeded", str(exc), exc.hint, facts=exc.facts)
+        except JobError as exc:
+            return _err("invalid_argument", str(exc), "Check the job id with dubforge_list_jobs.")
         except ProviderUnavailable as exc:
             return _err(
                 "no_provider",
@@ -238,7 +244,71 @@ def _known(kind: str, name: str, field: str) -> str:
 
 def _settings(**kwargs) -> Settings:
     clean = {key: value for key, value in kwargs.items() if value not in (None, "")}
-    return Settings.from_env(**clean)
+    try:
+        return Settings.from_env(**clean)
+    except ConfigError as exc:  # unknown key, bad type: an argument problem, not a crash
+        raise ToolError(
+            "invalid_argument", str(exc)[:400], "Check the setting names and types."
+        ) from exc
+
+
+def _dub_settings(
+    *,
+    target_lang: str,
+    source_lang: str,
+    asr: str,
+    translator: str,
+    tts: str,
+    separator: str,
+    voice_pool: str,
+    voice_map: str,
+    glossary: str,
+    style: str,
+    emotion: str,
+    context: str,
+    keep_background: bool,
+    max_speed: float,
+    rewrite_rounds: int,
+    loudness_lufs: float,
+    transcript: str,
+    dry_run: bool = False,
+) -> Settings:
+    """Validate every dub argument once, for both the synchronous tool and the job tool."""
+    settings = _settings(
+        target_lang=_lang(target_lang, "target_lang"),
+        source_lang=_lang(source_lang or "auto", "source_lang", allow_auto=True),
+        asr=_known("asr", asr, "asr") or None,
+        translator=_known("translate", translator, "translator") or None,
+        tts=_known("tts", tts, "tts") or None,
+        separator=_known("separator", separator, "separator") or None,
+        voice_pool=[v.strip() for v in voice_pool.split(",") if v.strip()] if voice_pool else None,
+        voice_map=_pairs(voice_map, "voice_map", "SPEAKER_00=<voice id>,SPEAKER_01=<voice id>")
+        or None,
+        glossary=_pairs(glossary, "glossary", "ISRO=इसरो,UPI=यूपीआई") or None,
+        style=style or None,
+        emotion=emotion or None,
+        context=context or None,
+        keep_background=bool(keep_background),
+        max_speed=_number(max_speed, "max_speed", 0.5, 2.0),
+        rewrite_rounds=int(_number(rewrite_rounds, "rewrite_rounds", 0, 5)),
+        loudness_lufs=_number(loudness_lufs, "loudness_lufs", -40.0, -5.0),
+        dry_run=bool(dry_run),
+        transcript=transcript or None,
+    )
+    invalid = settings.validate()
+    if invalid:
+        raise ToolError("invalid_argument", "; ".join(invalid), "Fix the named settings and retry.")
+    return settings
+
+
+def _runner_for(settings: Settings, holder: dict) -> JobRunner:
+    """One runner per work directory, created lazily and kept for the process."""
+    key = str(Path(settings.workdir).resolve())
+    runner = holder.get(key)
+    if runner is None:
+        runner = JobRunner(settings)
+        holder[key] = runner
+    return runner
 
 
 def run_transcription(
@@ -281,6 +351,9 @@ def run_transcription(
         }
 
 
+RUNNERS: dict[str, JobRunner] = {}
+
+
 def build_server():
     try:
         from fastmcp import FastMCP
@@ -295,6 +368,8 @@ def build_server():
             "1. `dubforge_doctor` — never guess whether a stage is available.\n"
             "2. `plan_dub` — get the cost, the provider choice and any missing keys BEFORE spending money.\n"
             "3. `dub_video` — run it. Read `qc`; if `ok` is false, read `failures` and fix the cause.\n"
+            "   For anything long, use `dubforge_submit_job` and poll `dubforge_get_job_status`;\n"
+            "   collect with `dubforge_get_job_result`. Cancellation is cooperative.\n"
             "4. Report the QC summary to the user and point at the files. Never claim a dub is good "
             "because it finished: a run can finish and still fail QC.\n\n"
             'Every tool returns {"ok": true, ...} or '
@@ -453,8 +528,6 @@ def build_server():
         glossary:   term=rendering,term2=rendering2
         """
         candidate = _media_path(path)
-        target = _lang(target_lang, "target_lang")
-        source = _lang(source_lang or "auto", "source_lang", allow_auto=True)
         if output:
             _path(output, "output", must_exist=False)
             if Path(output).expanduser().resolve() == candidate.resolve():
@@ -465,34 +538,26 @@ def build_server():
                 )
         if transcript:
             _path(transcript, "transcript")
-        settings = _settings(
-            target_lang=target,
-            source_lang=source,
-            asr=_known("asr", asr, "asr") or None,
-            translator=_known("translate", translator, "translator") or None,
-            tts=_known("tts", tts, "tts") or None,
-            separator=_known("separator", separator, "separator") or None,
-            voice_pool=[v.strip() for v in voice_pool.split(",") if v.strip()]
-            if voice_pool
-            else None,
-            voice_map=_pairs(voice_map, "voice_map", "SPEAKER_00=<voice id>,SPEAKER_01=<voice id>")
-            or None,
-            glossary=_pairs(glossary, "glossary", "ISRO=इसरो,UPI=यूपीआई") or None,
-            style=style or None,
-            emotion=emotion or None,
-            context=context or None,
-            keep_background=bool(keep_background),
-            max_speed=_number(max_speed, "max_speed", 0.5, 2.0),
-            rewrite_rounds=int(_number(rewrite_rounds, "rewrite_rounds", 0, 5)),
-            loudness_lufs=_number(loudness_lufs, "loudness_lufs", -40.0, -5.0),
-            dry_run=bool(dry_run),
-            transcript=transcript or None,
+        settings = _dub_settings(
+            target_lang=target_lang,
+            source_lang=source_lang,
+            asr=asr,
+            translator=translator,
+            tts=tts,
+            separator=separator,
+            voice_pool=voice_pool,
+            voice_map=voice_map,
+            glossary=glossary,
+            style=style,
+            emotion=emotion,
+            context=context,
+            keep_background=keep_background,
+            max_speed=max_speed,
+            rewrite_rounds=rewrite_rounds,
+            loudness_lufs=loudness_lufs,
+            transcript=transcript,
+            dry_run=dry_run,
         )
-        invalid = settings.validate()
-        if invalid:
-            raise ToolError(
-                "invalid_argument", "; ".join(invalid), "Fix the named settings and retry."
-            )
         result = pipeline.dub(candidate, settings, output=output or None)
         data = result.to_dict()
         return _ok(
@@ -579,6 +644,296 @@ def build_server():
         target_dir = _path(out_dir, "out_dir", must_exist=False) if out_dir else path.parent
         target_dir.mkdir(parents=True, exist_ok=True)
         return _ok(**srt.write_all(transcript.segments, target_dir, path.stem.replace(".dub", "")))
+
+    # ------------------------------------------------------------ job control
+    @mcp.tool()
+    @guard
+    def dubforge_submit_job(
+        path: str,
+        target_lang: str,
+        source_lang: str = "auto",
+        output: str = "",
+        asr: str = "",
+        translator: str = "",
+        tts: str = "",
+        separator: str = "",
+        voice_pool: str = "",
+        voice_map: str = "",
+        glossary: str = "",
+        style: str = "",
+        emotion: str = "",
+        context: str = "",
+        keep_background: bool = True,
+        max_speed: float = 1.15,
+        rewrite_rounds: int = 2,
+        loudness_lufs: float = -16.0,
+        transcript: str = "",
+    ) -> str:
+        """Start a dub in the background and return a job id immediately.
+
+        Use this for anything longer than a couple of minutes: poll `dubforge_get_job_status`
+        and collect with `dubforge_get_job_result`. The same source never runs twice at
+        once — submitting it again returns the job already running.
+        """
+        candidate = _media_path(path)
+        if output:
+            _path(output, "output", must_exist=False)
+            if Path(output).expanduser().resolve() == candidate.resolve():
+                raise ToolError(
+                    "invalid_argument",
+                    "output would overwrite the source file",
+                    "Pass a different output path, or leave it empty.",
+                )
+        if transcript:
+            _path(transcript, "transcript")
+        settings = _dub_settings(
+            target_lang=target_lang,
+            source_lang=source_lang,
+            asr=asr,
+            translator=translator,
+            tts=tts,
+            separator=separator,
+            voice_pool=voice_pool,
+            voice_map=voice_map,
+            glossary=glossary,
+            style=style,
+            emotion=emotion,
+            context=context,
+            keep_background=keep_background,
+            max_speed=max_speed,
+            rewrite_rounds=rewrite_rounds,
+            loudness_lufs=loudness_lufs,
+            transcript=transcript,
+        )
+        # Validate before queueing: a job that cannot pass limits should never start.
+        plan = pipeline.plan(candidate, settings)
+        if plan.problems:
+            raise ToolError("no_provider", "; ".join(plan.problems), "Run dubforge_doctor.")
+        job = _runner_for(settings, RUNNERS).submit(candidate, settings, output or None)
+        return _ok(
+            job=job.summary(),
+            duplicate=job.duplicate,
+            note="poll dubforge_get_job_status; cancellation is cooperative between stages",
+            estimate=plan.estimates,
+        )
+
+    @mcp.tool()
+    @guard
+    def dubforge_get_job_status(job_id: str) -> str:
+        """Current state of a job: status, stage, progress, elapsed time, any error."""
+        settings = _settings()
+        job = JobStore(settings.workdir).get(job_id)
+        if job is None:
+            raise ToolError(
+                "missing_file",
+                f"no job {job_id!r} in {settings.workdir}",
+                "List jobs with dubforge_list_jobs; the id comes from submit.",
+            )
+        return _ok(job=job.summary(), warnings=job.warnings[:10])
+
+    @mcp.tool()
+    @guard
+    def dubforge_get_job_result(job_id: str) -> str:
+        """Output paths, QC verdict and the providers that actually ran, once a job finished."""
+        settings = _settings()
+        job = JobStore(settings.workdir).get(job_id)
+        if job is None:
+            raise ToolError(
+                "missing_file", f"no job {job_id!r}", "Check the id with dubforge_list_jobs."
+            )
+        if job.status not in ("completed", "failed", "cancelled", "interrupted"):
+            raise ToolError(
+                "invalid_argument",
+                f"job {job_id} is still {job.status}",
+                "Poll dubforge_get_job_status until it reaches completed, failed or cancelled.",
+            )
+        payload = {
+            "job": job.summary(),
+            "output": job.output,
+            "audio": job.audio,
+            "transcript_json": job.transcript_json,
+            "subtitles": job.subtitles,
+            "report": job.report,
+            "qc": job.qc,
+            "providers_used": job.providers_used,
+            "warnings": job.warnings,
+        }
+        if job.qc:
+            payload["qc_summary"] = qc.summary(job.qc)
+        return _ok(**payload)
+
+    @mcp.tool()
+    @guard
+    def dubforge_list_jobs(
+        status: str = "", limit: int = 20, offset: int = 0, target_lang: str = ""
+    ) -> str:
+        """List jobs, newest first, with a total so you can paginate honestly."""
+        settings = _settings()
+        if status and status not in (
+            "queued",
+            "validating",
+            "processing",
+            "quality_check",
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+        ):
+            raise ToolError(
+                "invalid_argument",
+                f"unknown status {status!r}",
+                "Use queued, validating, processing, quality_check, completed, failed, cancelled "
+                "or interrupted, or leave it empty.",
+            )
+        jobs, total = JobStore(settings.workdir).list(
+            status=status or None,
+            limit=int(_number(limit, "limit", 1, 200)),
+            offset=int(_number(offset, "offset", 0, 100000)),
+            target_lang=target_lang or None,
+        )
+        return _ok(
+            total=total,
+            returned=len(jobs),
+            limit=int(limit),
+            offset=int(offset),
+            jobs=[job.summary() for job in jobs],
+        )
+
+    @mcp.tool()
+    @guard
+    def dubforge_cancel_job(job_id: str) -> str:
+        """Ask a job to stop. Cooperative: checked between stages and before each paid call."""
+        settings = _settings()
+        job = JobStore(settings.workdir).request_cancel(job_id)
+        return _ok(
+            job=job.summary(),
+            note="a line already being synthesised finishes; an ffmpeg run in progress is not killed",
+        )
+
+    @mcp.tool()
+    @guard
+    def dubforge_retry_job(job_id: str) -> str:
+        """Re-queue a failed, interrupted or cancelled job, within the configured retry budget."""
+        settings = _settings()
+        runner = _runner_for(settings, RUNNERS)
+        job = runner.retry(job_id)
+        return _ok(job=job.summary(), duplicate=job.duplicate)
+
+    @mcp.tool()
+    @guard
+    def dubforge_cleanup_jobs(
+        older_than_days: int = 0, statuses: str = "", dry_run: bool = True
+    ) -> str:
+        """Delete finished job records (and their work directories). Dry run by default."""
+        settings = _settings()
+        chosen = tuple(s.strip() for s in statuses.split(",") if s.strip()) or (
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+        )
+        unknown = [
+            s for s in chosen if s not in ("completed", "failed", "cancelled", "interrupted")
+        ]
+        if unknown:
+            raise ToolError(
+                "invalid_argument",
+                f"unknown status(es): {', '.join(unknown)}",
+                "Only finished jobs can be cleaned up.",
+            )
+        result = JobStore(settings.workdir).cleanup(
+            older_than_days=int(_number(older_than_days, "older_than_days", 0, 3650)) or None,
+            statuses=chosen,
+            dry_run=bool(dry_run),
+        )
+        return _ok(**result, note="dry_run=true lists what would go; set dry_run=false to delete")
+
+    # ------------------------------------------------------------ intelligence
+    @mcp.tool()
+    @guard
+    def dubforge_get_capabilities() -> str:
+        """What this install can actually do: stages, providers, features, formats, limits."""
+        return _ok(capabilities=capabilities.snapshot(_settings()))
+
+    @mcp.tool()
+    @guard
+    def dubforge_validate_config(config_path: str = "") -> str:
+        """Check a settings file and the environment, without starting any work."""
+        settings = _settings()
+        problems: list[str] = []
+        if config_path:
+            try:
+                settings = Settings.load(config_path, **{})
+            except ConfigError as exc:
+                problems.append(str(exc))
+        problems.extend(settings.validate())
+        problems.extend(settings.env_warnings)
+        # `ok` is the envelope (the call worked); `valid` is the answer. Two fields with
+        # the same name would make an agent guess which one it is reading.
+        return _ok(
+            valid=not problems,
+            problems=problems,
+            effective={
+                "target_lang": settings.target_lang,
+                "max_speed": settings.max_speed,
+                "keep_background": settings.keep_background,
+                "fallback": settings.fallback,
+                "limits": limits.describe(settings),
+            },
+            note="keys are reported as set or unset by dubforge_doctor, never by value",
+        )
+
+    @mcp.tool()
+    @guard
+    def dubforge_check_provider_health(kind: str = "", live: bool = False) -> str:
+        """Readiness for every adapter, and with live=true a cheap authenticated probe."""
+        settings = _settings()
+        kinds = [kind] if kind else list(registry.KINDS)
+        for name in kinds:
+            if name not in registry.KINDS:
+                raise ToolError(
+                    "invalid_argument",
+                    f"unknown stage {name!r}",
+                    f"Use one of: {', '.join(registry.KINDS)}",
+                )
+        report = {}
+        for stage in kinds:
+            report[stage] = [
+                registry.create(stage, name, settings).health(live=bool(live))
+                for name in registry.names(stage)
+            ]
+        return _ok(
+            live=bool(live),
+            providers=report,
+            note="live=true makes one cheap authenticated call per ready provider",
+        )
+
+    @mcp.tool()
+    @guard
+    def dubforge_estimate_cost(
+        path: str,
+        target_lang: str,
+        asr: str = "",
+        translator: str = "",
+        tts: str = "",
+    ) -> str:
+        """What a dub would cost at list prices, and whether your limits allow it. Spends nothing."""
+        candidate = _media_path(path)
+        settings = _settings(
+            target_lang=_lang(target_lang, "target_lang"),
+            asr=_known("asr", asr, "asr") or None,
+            translator=_known("translate", translator, "translator") or None,
+            tts=_known("tts", tts, "tts") or None,
+        )
+        plan = pipeline.plan(candidate, settings)
+        return _ok(
+            estimates=plan.estimates,
+            providers=plan.providers,
+            limits=limits.describe(settings),
+            allowed=not plan.problems,
+            problems=plan.problems,
+            note="list-price estimates, not a quote; actual charges come from the vendor",
+        )
 
     @mcp.tool()
     @guard

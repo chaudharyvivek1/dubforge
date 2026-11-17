@@ -15,6 +15,7 @@ run it" (`plan`). The order matters and is not arbitrary:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -24,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import ffmpeg, fit, qc, srt, timeline
+from . import limits as limits_mod
 from .config import Settings
 from .media import Segment, Transcript, file_fingerprint
 from .providers import registry
@@ -33,6 +35,15 @@ from .workspace import WorkspaceError, atomic_write_text, open_job, unlink_retry
 
 class DubError(RuntimeError):
     """The dub cannot continue. The message says what to change."""
+
+
+class DubCancelled(DubError):
+    """A caller asked to stop. Raised between stages and before each paid call.
+
+    Honest about its limits: an ffmpeg subprocess already running and a provider
+    request already in flight are *not* interrupted — the check happens at the next
+    boundary, which is the next line of dialogue at worst.
+    """
 
 
 @dataclass
@@ -102,6 +113,7 @@ class DubResult:
     output: str = ""
     audio: str = ""
     workdir: str = ""
+    providers_used: dict = field(default_factory=dict)
     transcript_json: str = ""
     subtitles: dict = field(default_factory=dict)
     qc: dict = field(default_factory=dict)
@@ -121,6 +133,7 @@ class DubResult:
             "audio": self.audio,
             "workdir": self.workdir,
             "transcript_json": self.transcript_json,
+            "providers_used": self.providers_used,
             "subtitles": self.subtitles,
             "qc": self.qc,
             "plan": self.plan,
@@ -149,6 +162,10 @@ def plan(source: str | Path, settings: Settings | None = None) -> DubPlan:
     if invalid:
         raise DubError("invalid settings:\n  - " + "\n  - ".join(invalid))
     info = ffmpeg.probe(source)
+    try:
+        limits_mod.check_source(source, settings, duration=info.duration)
+    except limits_mod.LimitExceeded as exc:
+        raise DubError(f"{exc}\n  {exc.hint}") from exc
     if not info.has_audio:
         raise DubError(f"{source} has no audio track to dub")
 
@@ -200,6 +217,11 @@ def plan(source: str | Path, settings: Settings | None = None) -> DubPlan:
         notes.append(
             "at least one stage has no published list price: budget from the vendor dashboard"
         )
+
+    try:
+        limits_mod.check_estimate(estimates, settings)
+    except limits_mod.LimitExceeded as exc:
+        problems.append(f"{exc} — {exc.hint}")
 
     return DubPlan(
         source=source,
@@ -427,11 +449,30 @@ def dub(
     settings: Settings | None = None,
     output: str | Path | None = None,
     log=None,
+    cancel=None,
+    progress=None,
 ) -> DubResult:
-    """Run the whole chain. Raises DubError with an actionable message on a hard stop."""
+    """Run the whole chain. Raises DubError with an actionable message on a hard stop.
+
+    `cancel` is a callable returning True when the caller wants to stop; it is consulted
+    between stages and before every paid call. `progress(stage, done, total)` is called
+    as stages complete, which is what lets a job store report something truthful.
+    """
     settings = settings or Settings()
     say = _log(log)
     source = str(source)
+    started_wall = time.time()
+    providers_used: dict[str, str] = {}
+
+    def check_cancel() -> None:
+        if cancel is not None and cancel():
+            raise DubCancelled("cancelled by the caller before the next stage")
+
+    def report_progress(stage: str, done: int, total: int) -> None:
+        if progress is not None:
+            # A broken observer must not fail the dub it is watching.
+            with contextlib.suppress(Exception):
+                progress(stage, done, total)
 
     # Guard the destination before spending anything: the last step of the pipeline is
     # a mux, and ffmpeg's refusal to write over its own input arrives after every
@@ -481,7 +522,13 @@ def dub(
     result.warnings.extend(job.notes)
     job.write_manifest(output=str(output) if output else "", target_lang=settings.target_lang)
 
+    total_steps = 11
+
     def step(name: str, fn, *args, **kwargs):
+        # Between stages: a cancellation and a wall-clock limit both land here, which is
+        # the cheapest place to stop without leaving half-written artefacts.
+        check_cancel()
+        limits_mod.check_runtime(started_wall, settings)
         started = time.time()
         say(f"· {name}")
         try:
@@ -492,7 +539,35 @@ def dub(
         detail = out[1] if isinstance(out, tuple) else ""
         value = out[0] if isinstance(out, tuple) else out
         result.steps.append(Step(name, time.time() - started, str(detail)))
+        report_progress(name, len(result.steps), total_steps)
         return value
+
+    def try_stage(kind: str, what: str, fn):
+        """Run a stage against a provider chain, falling back only when asked to.
+
+        Fallback is opt-in (`--fallback` / DUBFORGE_FALLBACK) because switching providers
+        changes both quality and cost, and an agent must be told when it happened rather
+        than discover it in the bill.
+        """
+        chain = registry.resolve_chain(kind, settings)
+        for index, provider in enumerate(chain):
+            try:
+                value = fn(provider)
+            except ProviderError as exc:
+                last = index == len(chain) - 1
+                if not settings.fallback or last:
+                    raise
+                nxt = chain[index + 1]
+                message = (
+                    f"{what}: {provider.name} failed ({exc.kind}); "
+                    f"falling back to {nxt.name} — different quality and cost"
+                )
+                result.warnings.append(message)
+                say(f"· {message}")
+                continue
+            providers_used[kind] = provider.name
+            return provider, value
+        raise DubError(f"{what}: no provider in the chain could run")  # pragma: no cover
 
     # 1 — decode ---------------------------------------------------------------
     asr_audio = step(
@@ -507,12 +582,18 @@ def dub(
     # 2 — bed ------------------------------------------------------------------
     bed_path: str | None = None
     if settings.keep_background:
-        separator = registry.resolve("separator", settings)
-        try:
-            _vocals, bed = step(
-                f"separate stems ({separator.name})",
-                lambda: (separator.separate(full_audio, str(work / "stems")), separator.name),
+
+        def _separate():
+            provider, pair = try_stage(
+                "separator",
+                "separate stems",
+                lambda prov: prov.separate(full_audio, str(work / "stems")),
             )
+            return (provider, pair), f"separator {provider.name}"
+
+        try:
+            separator, separated = step("separate stems", _separate)
+            _vocals, bed = separated
             bed_path = bed
             if not bed:
                 result.warnings.append(
@@ -530,9 +611,14 @@ def dub(
         )
         say(f"· transcribe — cached, {len(transcript.segments)} lines")
     else:
+        check_cancel()
         started = time.time()
-        say(f"· transcribe ({asr.name})")
-        transcript = asr.transcribe(asr_audio, settings.source_lang, diarize=True)
+        say(f"· transcribe ({asr_for_key.name})")
+        asr, transcript = try_stage(
+            "asr",
+            "transcribe",
+            lambda prov: prov.transcribe(asr_audio, settings.source_lang, diarize=True),
+        )
         result.steps.append(
             Step(
                 "transcribe",
@@ -540,13 +626,20 @@ def dub(
                 f"{len(transcript.segments)} lines, {len(transcript.speakers)} speaker(s), lang={transcript.language}",
             )
         )
-        if settings.cache:
+        # The cache key names the provider that was *asked* for. After a fallback the
+        # transcript came from someone else, so caching it under that key would hand a
+        # later run the wrong provenance.
+        if settings.cache and asr.name == asr_for_key.name:
             try:
                 _save_cached(job.cache_dir, fingerprint, transcript)
             except (CacheWriteError, OSError) as exc:
                 # Losing the cache costs a future transcription, not this dub.
                 result.warnings.append(f"transcript cache not written: {exc}")
                 say(f"· cache skipped: {exc}")
+        elif settings.cache:
+            result.warnings.append(
+                f"transcript not cached: produced by {asr.name} after a fallback from {asr_for_key.name}"
+            )
         job.mark("transcribe", True, f"{len(transcript.segments)} lines")
 
     if not transcript.segments:
@@ -561,7 +654,9 @@ def dub(
     timeline.windows(segments, info.duration, settings.tail_gap_s)
 
     # 4 — voices ---------------------------------------------------------------
-    tts = registry.resolve("tts", settings)
+    tts_chain = registry.resolve_chain("tts", settings)
+    tts = tts_chain[0]
+    providers_used["tts"] = tts.name
     speakers = timeline.speakers_in(segments)
     voice_map = _pick_voices(settings, tts, speakers)
     for seg in segments:
@@ -589,15 +684,19 @@ def dub(
             Step("translate", 0.0, "source and target are the same language; skipped")
         )
     else:
-        translator = registry.resolve("translate", settings)
+        check_cancel()
         started = time.time()
-        say(f"· translate ({translator.name}) → {settings.target_lang}")
-        translator.translate(
-            segments,
-            settings.source_lang if settings.source_lang != "auto" else transcript.language,
-            settings.target_lang,
-            glossary=settings.glossary,
-            context=settings.context or settings.style,
+        say(f"· translate → {settings.target_lang}")
+        translator, _ = try_stage(
+            "translate",
+            "translate",
+            lambda prov: prov.translate(
+                segments,
+                settings.source_lang if settings.source_lang != "auto" else transcript.language,
+                settings.target_lang,
+                glossary=settings.glossary,
+                context=settings.context or settings.style,
+            ),
         )
         result.steps.append(
             Step("translate", time.time() - started, f"{translator.name}, {len(segments)} lines")
@@ -639,6 +738,8 @@ def dub(
             result.steps.append(
                 Step("rewrite for timing", time.time() - started, f"{rounds} round(s)")
             )
+        if translator is not None:
+            providers_used["translate"] = translator.name
 
     # 7 — synthesise -----------------------------------------------------------
     tts_dir = work / "tts"
@@ -647,16 +748,34 @@ def dub(
     say(f"· synthesise {len(segments)} line(s) ({tts.name})")
     clips: list[tuple[str, float]] = []
     failures: list[str] = []
+    active_tts = tts
     for seg in segments:
+        check_cancel()  # before every paid call, which is the finest honest boundary
         path = str(tts_dir / f"{seg.index:05d}.wav")
         try:
-            rendered = tts.synthesize(
-                seg.speech,
-                seg.voice or "",
-                path,
-                style=seg.style,
-                emotion=settings.emotion or None,
+            provider, rendered = try_stage(
+                "tts",
+                f"synthesise line {seg.index}",
+                # Bind the loop variables: a late-bound closure would synthesise the
+                # last line's text into the first line's file.
+                lambda prov, _seg=seg, _path=path: prov.synthesize(
+                    _seg.speech,
+                    _seg.voice or "",
+                    _path,
+                    style=_seg.style,
+                    emotion=settings.emotion or None,
+                ),
             )
+            if provider.name != active_tts.name:
+                # The fallback provider does not know the first provider's voice ids.
+                # Re-map from what it offers, and say so — a voice change is audible.
+                active_tts = provider
+                voice_map = _pick_voices(settings, active_tts, speakers)
+                for remaining in segments[seg.index :]:
+                    remaining.voice = voice_map.get(remaining.speaker, "")
+                result.warnings.append(
+                    f"voices re-assigned from {active_tts.name}: the previous provider failed mid-run"
+                )
             # A provider can answer 200 with a zero-byte body or a silent file. Left
             # unchecked, that line "succeeds", the timeline gets a 0s clip, and QC
             # reports a dub with a hole in it that nobody notices until playback.
@@ -794,7 +913,9 @@ def dub(
     )
     qc.save(result.qc, work / "qc.json")
     result.report = _write_report(result, plan_obj, settings, transcript)
+    result.providers_used = dict(providers_used)
     job.finished(
+        providers_used=result.providers_used,
         output=output,
         qc_ok=result.qc.get("ok"),
         failures=result.qc.get("failures", []),

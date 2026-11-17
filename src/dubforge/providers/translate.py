@@ -165,6 +165,15 @@ class OpenAITranslator(LLMTranslator):
         docs="https://platform.openai.com/docs/api-reference/chat",
     )
 
+    def probe(self) -> str | None:
+        from .http import probe_json
+
+        return probe_json(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {self.settings.provider_key('openai') or ''}"},
+            provider="openai",
+        )
+
     def complete(self, system: str, user: str) -> str:
         key = self.settings.provider_key("openai") or ""
         resp = post(
@@ -323,6 +332,17 @@ class DeepLTranslator(Translator):
         docs="https://developers.deepl.com/docs",
     )
 
+    def probe(self) -> str | None:
+        from .http import probe_json
+
+        key = (self.settings.provider_key("deepl") or "").strip()
+        host = "https://api-free.deepl.com" if key.endswith(":fx") else "https://api.deepl.com"
+        return probe_json(
+            f"{host}/v2/usage",
+            headers={"Authorization": f"DeepL-Auth-Key {key}"},
+            provider="deepl",
+        )
+
     def translate(
         self, segments, source, target, glossary=None, instructions=None, context=""
     ) -> None:
@@ -377,6 +397,14 @@ class OllamaTranslator(LLMTranslator):
         except Exception:  # noqa: BLE001 - any failure means "no server there"
             gaps.append(f"no Ollama server answering at {base} (start `ollama serve`)")
         return gaps
+
+    def probe(self) -> str | None:
+        import os
+
+        from .http import probe_json
+
+        base = os.environ.get("DUBFORGE_OLLAMA_URL", "http://localhost:11434").rstrip("/")
+        return probe_json(f"{base}/api/tags", provider="ollama")
 
     def complete(self, system: str, user: str) -> str:
         import os

@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import ffmpeg
+from . import capabilities, ffmpeg, limits
 from .config import Settings
 from .providers import registry
 
@@ -129,6 +129,9 @@ def checks(settings: Settings | None = None) -> dict:
         )
     }
     report["providers"] = registry.ready_summary(settings)
+    # Same source as `dubforge capabilities` and the MCP tool, so the three cannot drift.
+    report["features"] = capabilities.snapshot(settings)["features"]
+    report["limits"] = limits.describe(settings)
     report["ready"] = {k: v.get("ready") for k, v in report["providers"].items()}
 
     for kind, row in report["providers"].items():
@@ -190,6 +193,20 @@ def text(settings: Settings | None = None) -> str:
         else:
             first = row["missing"][0] if row["missing"] else "nothing available"
             lines.append(f"  {kind:<10} NOT READY — {first}")
+    lines.append("")
+    lines.append("features")
+    for name, state in r["features"].items():
+        if isinstance(state, dict):
+            value = (
+                f"yes via {state['provider']} ({'verified' if state['verified'] else 'unverified'})"
+                if state["supported"]
+                else "no"
+            )
+        else:
+            value = "enabled" if state else "disabled"
+        lines.append(f"  {name:<28} {value}")
+    lines.append("")
+    lines.append(limits.summary(settings))
     if r["hints"]:
         lines.append("")
         lines.append("hints")

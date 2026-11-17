@@ -107,6 +107,24 @@ What this boundary does **not** give you: an agent that can already write files 
 machine can still pass a path you would rather it did not. Run the server as a user
 whose filesystem access matches what you are willing to grant it.
 
+## Jobs, ids and cleanup (0.2.0)
+
+* **Job ids are validated before they touch the filesystem.** `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`
+  — `../../etc/passwd` is an `invalid_argument`, not a path.
+* **Cleanup is bounded twice.** It only considers finished jobs, only deletes
+  `registry/<id>.json` and `jobs/<id>/`, and resolves each directory against
+  `<workdir>/jobs/` before removing it. `dubforge_cleanup_jobs` defaults to
+  `dry_run=true`; the CLI defaults to a dry run and needs `--yes`.
+* **Job documents carry no secrets and no transcript.** Status, paths, counts, QC summary,
+  provider names. `dubforge_get_job_result` returns paths, not text.
+* **A job cannot be executed twice.** The runner refuses a duplicate submission of an
+  in-flight job, and the workspace lock covers the cross-process case.
+* **Limits are enforced before spending.** `max_input_bytes`, `max_input_seconds`,
+  `max_run_seconds`, `max_estimated_usd`, `max_concurrent_jobs` — a refusal with the
+  setting to change, never a silent override.
+* **Cancellation is cooperative**, and the tool output says so rather than implying an
+  in-flight provider call is interrupted.
+
 ## Uploads for lip sync
 
 `synclabs` fetches URLs. dubforge deliberately does **not** upload your footage to a
