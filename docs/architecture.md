@@ -230,6 +230,15 @@ change does not. `REQUEST_FIELDS` covers what changes the artifact — including
 `lipsync` and `separator` — and deliberately excludes limits, logging and local paths. A
 supplied transcript enters the identity as a hash of its bytes, never as a path.
 
+## Lock liveness, by platform
+
+A lock is stale when its **owner is gone**. On POSIX that is a dead pid (`os.kill(pid, 0)`),
+checked before age, so a slow-but-live renderer is never robbed. On Windows a pid cannot be
+probed, so liveness is decided by age alone (`LOCK_STALE_S`, 120 s for segments, 600 s for
+stems): a worker that legitimately runs longer than that can have its lock taken, which is
+why the segment store treats a lost lock as "render without the cache" rather than an error.
+Both paths are tested; the Windows test backdates the lock instead of pretending a pid works.
+
 ## Measuring it (0.2.1)
 
 ```bash
