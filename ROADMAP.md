@@ -7,10 +7,12 @@ what is most fun to build.
 
 ## Now — the honest state of 0.2.1
 
-* The pipeline is complete and the offline path is fully tested (371 tests, real ffmpeg,
-  a real mp4 at the end of `dubforge demo`).
+* The pipeline is complete and the offline path is fully tested (the suite is the source of
+  truth for its own size — `python -m pytest --collect-only -q | tail -1` — real ffmpeg, a
+  real mp4 at the end of `dubforge demo`).
 * Jobs are request-addressed, single-owner, heartbeat-monitored and recoverable; retries
-  cannot silently bill twice; batch outputs cannot collide; QC has 21 measurable checks.
+  cannot silently bill twice; batch outputs cannot collide; QC has twenty measurable checks
+  (twenty-one for a multi-track source — see `docs/quality.md`).
 * Jobs, background execution, cooperative cancellation, capabilities, limits, batch
   processing, provider health and opt-in fallback all shipped in 0.2.0.
 * 24 adapters exist; the network ones are written against vendor documentation and are

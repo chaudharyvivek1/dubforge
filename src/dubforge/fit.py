@@ -58,8 +58,35 @@ CPS: dict[str, float] = {
 DEFAULT_CPS = 13.0
 
 
+_MEASURED: dict[str, dict] | None = None
+
+
+def _measured() -> dict[str, dict]:
+    """Measured overrides, loaded once. Empty until `scripts/calibrate.py` writes them."""
+    global _MEASURED
+    if _MEASURED is None:
+        from .calibration import load_measured
+
+        _MEASURED = load_measured()
+    return _MEASURED
+
+
+def source_for(language: str) -> str:
+    """`measured(n=…)` or `estimate` — never a bare number without provenance."""
+    key = (language or "").lower().split("-")[0]
+    row = _measured().get(key)
+    if row and row.get("n"):
+        return f"measured(n={row['n']})"
+    return "estimate"
+
+
 def cps_for(language: str) -> float:
-    return CPS.get((language or "").lower().split("-")[0], DEFAULT_CPS)
+    """Characters per second: measured when there is enough data, otherwise an estimate."""
+    key = (language or "").lower().split("-")[0]
+    row = _measured().get(key)
+    if row and row.get("cps"):
+        return float(row["cps"])
+    return CPS.get(key, DEFAULT_CPS)
 
 
 def estimate_seconds(text: str, language: str) -> float:

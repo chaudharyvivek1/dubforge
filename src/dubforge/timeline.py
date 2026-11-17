@@ -103,24 +103,50 @@ def windows(
     segments: list[Segment],
     total_duration: float,
     tail_gap: float = 0.12,
-    max_stretch: float = 2.5,
+    max_stretch: float | None = None,
 ) -> list[float]:
     """Seconds each dub line may occupy, then written onto `segment.window`.
 
-    A line may run into the silence that follows it, but never into the start of the
-    next line (minus `tail_gap` so two voices do not collide). The last line gets its
-    own duration or the remaining runtime, whichever is smaller, times `max_stretch`
-    so a final line is not forced into a 0.4s window.
+    The rules, in the order they apply (0.3.0):
+
+    1. **Overlapping source dialogue** (`next.start < seg.end`, two people talking over each
+       other): the window is the segment's own duration. Serialising an overlap would mean
+       cutting one speaker off to let the other start, which is worse than the overlap.
+    2. **Consecutive sentences with a gap**: the window is everything up to `tail_gap` before
+       the next line starts, so a dub line may use the silence that follows it.
+    3. **An ASR end that runs past the next start** (bad end timestamps): treated as an
+       overlap, and `overlaps_next` is set so a reviewer can see the transcription is
+       suspect rather than the dub.
+    4. **Very short segments**: the window is the room available, *never more*. A floor that
+       exceeds the room is how a dub line ends up talking over the next one — the old
+       `max(room, …)` did exactly that. `window_tight` records the squeeze instead.
+    5. **The last line**: everything left in the runtime, measured from the line's own start.
+
+    `max_stretch` is accepted for compatibility and ignored: it existed only to expand the
+    floor, which is the behaviour this version removes.
     """
     ordered = sorted(segments, key=lambda s: s.start)
     out: list[float] = []
-    for i, seg in enumerate(ordered):
-        if i + 1 < len(ordered):
-            room = ordered[i + 1].start - tail_gap - seg.start
+    for index, seg in enumerate(ordered):
+        next_start = ordered[index + 1].start if index + 1 < len(ordered) else None
+        overlaps = next_start is not None and next_start < seg.end
+        seg.overlaps_next = bool(overlaps)
+
+        if next_start is not None and not overlaps:
+            room = next_start - tail_gap - seg.start
+        elif overlaps:
+            room = seg.duration
         else:
             remaining = max(total_duration, seg.end) - seg.start
             room = remaining if remaining > 0 else seg.duration
-        room = max(room, min(seg.duration * max_stretch, max(seg.duration, 0.4)))
+
+        room = max(0.0, room)
+        # A tight window is not expanded; it is reported, because the honest fix is a
+        # shorter translation or a slightly faster read, not a collision.
+        # Tight = the room is less than the line's own duration (it must be compressed or
+        # shortened), or so short that nothing sensible fits. A percentage threshold missed
+        # exactly the 0.3 s segments that motivated this rule.
+        seg.window_tight = room + 1e-6 < seg.duration or room < 0.4
         seg.window = round(room, 3)
         out.append(seg.window)
     return out

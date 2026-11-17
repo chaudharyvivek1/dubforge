@@ -37,7 +37,10 @@ def test_a_small_run_reports_the_numbers_it_measured(tmp_path, capsys):
     # None is a valid answer where the platform will not report peak memory.
     assert row["peak_rss_mb"] is None or row["peak_rss_mb"] > 0
     assert row["work_files"] > 0
-    assert row["qc_checks"] >= 20, "a single-track source produces twenty checks"
+    assert row["qc_checks"] >= 23, "a single-track source produces twenty-three checks"
+    assert row["second_run_rendered"] == 0, "the second run must reuse every render"
+    assert row["second_run_reused"] >= 1
+    assert row["second_run_s"] <= row["dub_s"] * 1.2
     assert payload["note"].startswith("Stub providers")
 
 

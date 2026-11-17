@@ -22,6 +22,7 @@ Exit codes: `0` success, `1` QC failed (the run finished and the dub did not pas
 | [`dubforge capabilities`](#dubforge-capabilities) | what this install can do, in JSON or prose |
 | [`dubforge validate-config`](#dubforge-validate-config) | check a settings file and the environment |
 | [`dubforge jobs`](#dubforge-jobs) | list, inspect, cancel, retry or clean up jobs |
+| [`dubforge regen`](#dubforge-regen) | re-dub one job with edited lines, reusing untouched renders |
 | [`dubforge batch`](#dubforge-batch) | dub a folder (or a list of files) through the same pipeline |
 | [`dubforge mcp`](#dubforge-mcp) | run the MCP server on stdio |
 
@@ -186,6 +187,21 @@ list, inspect, cancel, retry or clean up jobs
 | `--yes` | cleanup: actually delete (default is a dry run) | `False` |
 
 Positional arguments: `action`, `job_id`
+
+
+## `dubforge regen`
+
+re-dub one job with edited lines, reusing untouched renders
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `--config` | JSON settings file (keys and values as in Settings) | — |
+| `--workdir` | where intermediates go (default dubforge-work) | — |
+| `--json` | machine-readable output | off |
+| `--set` | replace a line's translation, by segment id or index (repeatable) | — |
+| `--out` | output path (default: <previous>.r<N>.mp4, never the old file) | — |
+
+Positional arguments: `job_id`
 
 
 ## `dubforge batch`

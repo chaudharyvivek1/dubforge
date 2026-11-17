@@ -255,6 +255,24 @@ class TTSProvider(Provider):
         """Render one line to `out_path` (wav preferred; convert if the vendor returns mp3)."""
         raise NotImplementedError
 
+    def synthesize_with_timestamps(
+        self,
+        text: str,
+        voice: str,
+        out_path: str,
+        style: str | None = None,
+        emotion: str | None = None,
+        sample_rate: int = 48000,
+    ) -> tuple[SynthResult, list]:
+        """Render, and return word timings **if the vendor reports them**.
+
+        The default renders and reports that no timings came back, so a caller never has to
+        guess whether an adapter supports alignment. An adapter overrides this only when its
+        vendor really returns timings — `alignment.py` explains why there is no "estimate"
+        middle ground.
+        """
+        return self.synthesize(text, voice, out_path, style, emotion, sample_rate), []
+
 
 # --------------------------------------------------------------------- separator
 

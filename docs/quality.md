@@ -107,7 +107,9 @@ enough to survive a phone speaker. −14 for podcast, −23 for broadcast EBU R1
 ## 5. The checks
 
 `qc.json`, printed by `dubforge dub` and in `report.md`. `fail` exits non-zero.
-Fifteen checks, because the failures are independent: a dub can be perfectly timed,
+Twenty-three checks for a single-audio-track source (twenty-four when the source has
+several audio tracks, because `multiple_audio_tracks` is only emitted then), because the
+failures are independent: a dub can be perfectly timed,
 correctly voiced, loud enough — and silent, if the voice provider answered 200 with
 nothing in the body.
 
@@ -126,14 +128,16 @@ nothing in the body.
 | `loudness` | warn | within ±2.5 LU of the target |
 | `duration_preserved` | warn | output within 0.5 s of input |
 | `frame_rate_preserved` | warn | the copied video stream kept its fps |
-| `multiple_audio_tracks` | warn | the source had one audio track (extra tracks are dropped) |
 | `subtitle_timing` | fail | every subtitle has a positive duration and consecutive cues do not overlap |
 | `subtitle_readability` | warn | lines fit `qc_max_chars_per_line` (42), at most `qc_max_lines` (2), under `qc_max_reading_cps` (20) and on screen for `qc_min_display_s` (0.8) |
 | `streams_present` | fail | the output has the dubbed audio and, if the source had one, a video stream — and exactly one audio stream |
 | `video_codec_preserved` | warn | the picture was streamed through, not re-encoded |
 | `audio_layout` | warn | the dub is at least 44.1 kHz with one or two channels |
 | `not_mostly_silent` | warn | less than 75% of the dub track is silence, which is how a missing line shows up |
-| `multiple_audio_tracks` | warn | only added when the source has more than one audio stream: the first was dubbed and the others were not |
+| `multiple_audio_tracks` | warn | *conditional*: emitted only when the source has more than one audio stream — the first was dubbed, the others were not |
+| `short_tts_output` | warn | every render is at least `qc_min_tts_ratio` (30%) of its text's estimated duration — a far shorter render usually means the provider truncated |
+| `excessive_compression` | warn | no line played faster than `qc_max_audible_speed` (1.10×), above which atempo is audible as compression even when the timing is legal |
+| `silence_inside_line` | warn | no rendered line is more than `qc_line_silence_ratio` (50%) silence; measured on at most `qc_silence_sample` (40) lines so a long film does not cost 900 decodes |
 | `background_kept` | warn | a bed was mixed under the dub |
 
 `fail` means *do not ship*. `warn` means *listen to this one*. A run that ends with

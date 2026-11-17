@@ -4,7 +4,7 @@ Written before the next phase of work, as the project's own rules require: inspe
 report, then implement in separate reviewed changes. **Nothing in the "missing" tables
 below is implemented yet.** Where a feature is partial, it says exactly how far it goes.
 
-Current release: **0.2.1**. Everything in "implemented" is tested; everything else is
+Current release: **0.3.0**. Everything in "implemented" is tested; everything else is
 not, and is not advertised anywhere.
 
 ---
@@ -33,7 +33,7 @@ CLI (cli.py)            MCP server (server.py)         Library (__init__.py)
 | `fit.py` | characters-per-second model, per-line windows, rewrite budget | the dubbing-specific maths |
 | `timeline.py` | words → sentences → speakers → windows → voice map | deterministic, fully unit-tested |
 | `media.py` | `Word` / `Segment` / `Transcript`, JSON round-trip, content hash | the data model everything shares |
-| `qc.py` | twenty checks, metrics, one-screen summary | `fail` exits non-zero |
+| `qc.py` | twenty-three checks, metrics, one-screen summary | `fail` exits non-zero |
 | `srt.py` | source / target / bilingual SRT, VTT, SRT import | review artefacts |
 | `workspace.py` | job directories, locks, manifest, shared cache, safe cleanup | added in 0.1.1 |
 | `config.py` | `Settings`, environment and JSON file parsing, validation | added strict booleans and file validation in 0.1.2 |

@@ -132,6 +132,11 @@ def measure(size: str, root: Path) -> dict:
         runner.shutdown(wait=True)
     job_s = round(time.perf_counter() - job_started, 2)
 
+    # Selective regeneration: a second run should reuse every unchanged render.
+    started = time.perf_counter()
+    second = pipeline.dub(media, settings, output=root / f"{size}.hi.again.mp4")
+    regen_s = round(time.perf_counter() - started, 2)
+
     job_dir = Path(result.workdir)
     temp_files = sum(1 for _ in job_dir.rglob("*") if _.is_file()) if job_dir.exists() else 0
 
@@ -150,6 +155,9 @@ def measure(size: str, root: Path) -> dict:
         "qc_checks": len(result.qc["checks"]),
         "qc_failures": result.qc["failures"],
         "job_status": final.status,
+        "second_run_s": regen_s,
+        "second_run_rendered": second.rendered_segments,
+        "second_run_reused": second.reused_segments,
     }
 
 
@@ -179,7 +187,8 @@ def main(argv: list[str] | None = None) -> int:
                     f"plan {row['plan_ms']:>6.1f}ms  dub {row['dub_s']:>6.2f}s  "
                     f"job +{row['job_overhead_s']:>5.2f}s  "
                     f"rss {(row['peak_rss_mb'] if row['peak_rss_mb'] is not None else 'n/a'):>6}MB  "
-                    f"files {row['work_files']:>4}"
+                    f"files {row['work_files']:>4}  rerun {row['second_run_s']:>5.2f}s "
+                    f"({row['second_run_reused']} reused)"
                 )
     finally:
         if not args.keep:

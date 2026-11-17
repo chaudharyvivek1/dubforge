@@ -47,6 +47,16 @@ class Segment:
     raw_duration: float | None = None  # TTS output before stretching
     rendered_duration: float | None = None
     speed: float = 1.0  # atempo factor actually applied
+    window_tight: bool = False  # the window is shorter than this line wants
+    overlaps_next: bool = False  # the source dialogue overlaps the next line
+    # alignment: only ever "measured" or "none" — see alignment.py
+    target_words: list[Word] = field(default_factory=list)
+    alignment: str = "none"
+    alignment_note: str = ""
+    # regeneration bookkeeping (0.3.0)
+    seg_id: str = ""
+    render_fingerprint: str = ""
+    regenerated: bool = False
     # bookkeeping
     notes: list[str] = field(default_factory=list)
 

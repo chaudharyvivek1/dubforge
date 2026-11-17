@@ -24,8 +24,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import events, ffmpeg, fit, qc, srt, timeline
+from . import alignment, events, ffmpeg, fit, qc, srt, timeline
 from . import limits as limits_mod
+from . import segments as segment_store
 from .config import Settings
 from .media import Segment, Transcript, file_fingerprint
 from .providers import http as provider_http
@@ -116,6 +117,9 @@ class DubResult:
     workdir: str = ""
     providers_used: dict = field(default_factory=dict)
     retries: list = field(default_factory=list)
+    alignment: dict = field(default_factory=dict)
+    reused_segments: int = 0
+    rendered_segments: int = 0
     transcript_json: str = ""
     subtitles: dict = field(default_factory=dict)
     qc: dict = field(default_factory=dict)
@@ -137,6 +141,10 @@ class DubResult:
             "transcript_json": self.transcript_json,
             "providers_used": self.providers_used,
             "retries": self.retries,
+            "alignment": self.alignment,
+            "review": self.review,
+            "reused_segments": self.reused_segments,
+            "rendered_segments": self.rendered_segments,
             "subtitles": self.subtitles,
             "qc": self.qc,
             "plan": self.plan,
@@ -397,6 +405,180 @@ def _save_cached(
         thread_lock.release()
 
 
+def _load_supplied_transcript(path: str | Path) -> Transcript:
+    """Load a transcript the caller already has: a JSON dump, or a plain `.srt`."""
+    source = Path(path).expanduser()
+    if not source.exists():
+        raise DubError(f"no transcript at {source}")
+    if source.suffix.lower() in (".srt", ".vtt"):
+        segments = srt.read_srt(source)
+        if not segments:
+            raise DubError(f"{source} has no subtitle cues")
+        return Transcript(
+            segments=segments,
+            language="unknown",
+            provider=f"supplied-{source.suffix.lstrip('.')}",
+            speakers=timeline.speakers_in(segments),
+            duration=max(seg.end for seg in segments),
+        )
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+        raise DubError(f"{source} is not valid JSON: {exc}") from exc
+    if isinstance(data, dict) and "transcript" in data:  # a cache file
+        data = data["transcript"]
+    if not isinstance(data, dict) or "segments" not in data:
+        raise DubError(f"{source} does not look like a transcript (no 'segments')")
+    transcript = Transcript.from_dict(data)
+    if not transcript.segments:
+        raise DubError(f"{source} has no segments")
+    return transcript
+
+
+def regenerate(
+    job_id: str,
+    settings: Settings | None = None,
+    edits: dict[str, str] | None = None,
+    output: str | Path | None = None,
+    log=None,
+) -> DubResult:
+    """Re-dub a finished job with some lines edited, reusing every untouched render.
+
+    `edits` maps a segment id (or its index) to new target text. Everything not edited is
+    reused from the segment store, so changing one sentence costs one synthesis rather than a
+    whole film. The new dub is written to a **new path** — a previous output is never
+    replaced by a run that might fail.
+    """
+    from .jobs import JobStore
+
+    settings = settings or Settings()
+    say = _log(log)
+    store = JobStore(settings.workdir)
+    job = store.get(job_id)
+    if job is None:
+        raise DubError(f"no job {job_id!r} in {settings.workdir}")
+    if not job.transcript_json or not Path(job.transcript_json).exists():
+        raise DubError(
+            f"job {job_id} has no transcript to edit; run it again with a transcript written"
+        )
+
+    transcript = Transcript.load(job.transcript_json)
+    if not transcript.segments:
+        raise DubError(f"job {job_id} has an empty transcript")
+
+    applied = 0
+    by_id = {segment_store.segment_id(seg): seg for seg in transcript.segments}
+    for key, text in (edits or {}).items():
+        target = by_id.get(key)
+        if target is None and key.isdigit():
+            index = int(key)
+            target = next((seg for seg in transcript.segments if seg.index == index), None)
+        if target is None:
+            raise DubError(f"no segment {key!r} in job {job_id}")
+        target.target_text = text
+        target.translator = "edited"
+        applied += 1
+
+    # A new transcript file, written atomically: the original stays as it was.
+    base = Path(job.transcript_json)
+    version = 1
+    while (base.parent / f"transcript.regen-{version}.json").exists():
+        version += 1
+    edited_path = base.parent / f"transcript.regen-{version}.json"
+    from .workspace import atomic_write_text
+
+    atomic_write_text(edited_path, json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2))
+
+    if output:
+        destination = Path(output)
+    else:
+        previous = Path(job.output) if job.output else Path(job.source)
+        destination = previous.with_name(f"{previous.stem}.r{version}{previous.suffix or '.mp4'}")
+    if destination.resolve() == Path(job.source).resolve():
+        raise DubError("the regenerated output would overwrite the source")
+
+    say(f"· regenerate {job_id}: {applied} edited line(s) → {destination.name}")
+    run_settings = settings.with_overrides(
+        transcript=str(edited_path), retranslate=False, segment_reuse=True
+    )
+    result = dub(job.source, run_settings, output=destination, log=log)
+    result.warnings.append(
+        f"regenerated from job {job_id}: {applied} edited line(s), "
+        f"{result.rendered_segments} rendered, {result.reused_segments} reused"
+    )
+    return result
+
+
+def _write_review(
+    result: DubResult, segments: list, settings: Settings, transcript: Transcript, path: Path
+) -> str:
+    """A stable, machine-readable record for a human reviewer.
+
+    One row per line with everything needed to accept or reject it: the source sentence, the
+    translation, the speaker, both timings, the voice, the audio file, the fit verdict, the
+    alignment precision, whether it was regenerated, and any warnings. This is the artefact a
+    review tool or a spreadsheet should read — the subtitles are for reading, this is for
+    deciding.
+    """
+    from . import fit as fit_module
+
+    rows = []
+    for seg in segments:
+        verdict = fit_module.fit(
+            seg.speech, seg.window or seg.duration or 0.1, settings.target_lang, settings.max_speed
+        )
+        rows.append(
+            {
+                "index": seg.index,
+                "seg_id": seg.seg_id,
+                "speaker": seg.speaker,
+                "source_text": seg.text,
+                "target_text": seg.speech,
+                "translator": seg.translator,
+                "voice": seg.voice,
+                "source": {"start": round(seg.start, 3), "end": round(seg.end, 3)},
+                "target": {
+                    "start": round(seg.start, 3),
+                    "window": seg.window,
+                    "rendered_duration": seg.rendered_duration,
+                    "speed": seg.speed,
+                },
+                "fit": {
+                    "verdict": verdict.verdict,
+                    "ratio": round(verdict.ratio, 3),
+                    "target_chars": verdict.target_chars,
+                },
+                "audio": seg.audio_path,
+                "alignment": alignment.describe(seg),
+                "regenerated": seg.regenerated,
+                "warnings": list(seg.notes),
+            }
+        )
+    payload = {
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "source": str(settings.workdir and Path(result.output).name),
+        "target_lang": settings.target_lang,
+        "source_lang": settings.source_lang,
+        "providers_used": result.providers_used,
+        "alignment": result.alignment,
+        "reused_segments": result.reused_segments,
+        "rendered_segments": result.rendered_segments,
+        "qc": {
+            "ok": result.ok,
+            "failures": result.qc.get("failures", []),
+            "warnings": result.qc.get("warnings", []),
+        },
+        "run_warnings": result.warnings,
+        "segments": rows,
+        "note": (
+            "One row per line, for human review. `alignment.sentence_level_only` means the "
+            "timings are per line, not per word — they were not measured per word."
+        ),
+    }
+    atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
+    return str(path)
+
+
 def _write_report(
     result: DubResult, plan_obj: DubPlan, settings: Settings, transcript: Transcript
 ) -> str:
@@ -625,8 +807,25 @@ def dub(
 
     # 3 — transcribe -----------------------------------------------------------
     asr = asr_for_key
-    transcript = _load_cached(job.cache_dir, fingerprint) if settings.cache else None
-    if transcript is not None:
+    transcript = None
+    if settings.transcript:
+        # `--transcript` was documented and silently ignored before 0.3.0: the pipeline
+        # always ran recognition. Now it loads the file it was given.
+        transcript = _load_supplied_transcript(settings.transcript)
+        result.steps.append(
+            Step(
+                "transcribe",
+                0.0,
+                f"reused the supplied transcript ({len(transcript.segments)} lines, "
+                f"{Path(settings.transcript).name})",
+            )
+        )
+        say(f"· transcribe — supplied, {len(transcript.segments)} lines")
+    if transcript is None and settings.cache:
+        transcript = _load_cached(job.cache_dir, fingerprint)
+    if transcript is not None and settings.transcript:
+        pass
+    elif transcript is not None:
         result.steps.append(
             Step("transcribe", 0.0, f"reused cached transcript ({len(transcript.segments)} lines)")
         )
@@ -696,8 +895,20 @@ def dub(
     same_language = _same_language(settings.source_lang, settings.target_lang) or _same_language(
         transcript.language, settings.target_lang
     )
+    keep_existing = (
+        not settings.retranslate
+        and bool(segments)
+        and all((seg.target_text or "").strip() for seg in segments)
+    )
     translator = None
-    if same_language:
+    if keep_existing:
+        # Regeneration: the caller edited these lines, so translating again would throw the
+        # edits away. Say so in the report rather than silently keeping them.
+        result.steps.append(Step("translate", 0.0, "kept the supplied translations (regeneration)"))
+        result.warnings.append("translations reused as supplied; no translator was called")
+        for seg in segments:
+            seg.translator = seg.translator or "supplied"
+    elif same_language:
         for seg in segments:
             seg.target_text = seg.text
             seg.translator = "same-language"
@@ -770,52 +981,36 @@ def dub(
     clips: list[tuple[str, float]] = []
     failures: list[str] = []
     active_tts = tts
-    for seg in segments:
-        check_cancel()  # before every paid call, which is the finest honest boundary
-        path = str(tts_dir / f"{seg.index:05d}.wav")
-        try:
-            provider, rendered = try_stage(
-                "tts",
-                f"synthesise line {seg.index}",
-                # Bind the loop variables: a late-bound closure would synthesise the
-                # last line's text into the first line's file.
-                lambda prov, _seg=seg, _path=path: prov.synthesize(
-                    _seg.speech,
-                    _seg.voice or "",
-                    _path,
-                    style=_seg.style,
-                    emotion=settings.emotion or None,
-                ),
+
+    def _synth(provider, segment, path):
+        """Render one line, preferring a provider that also reports word timings."""
+        method = getattr(provider, "synthesize_with_timestamps", None)
+        if callable(method):
+            return method(
+                segment.speech,
+                segment.voice or "",
+                path,
+                style=segment.style,
+                emotion=settings.emotion or None,
             )
-            if provider.name != active_tts.name:
-                # The fallback provider does not know the first provider's voice ids.
-                # Re-map from what it offers, and say so — a voice change is audible.
-                active_tts = provider
-                voice_map = _pick_voices(settings, active_tts, speakers)
-                for remaining in segments[seg.index :]:
-                    remaining.voice = voice_map.get(remaining.speaker, "")
-                result.warnings.append(
-                    f"voices re-assigned from {active_tts.name}: the previous provider failed mid-run"
-                )
-            # A provider can answer 200 with a zero-byte body or a silent file. Left
-            # unchecked, that line "succeeds", the timeline gets a 0s clip, and QC
-            # reports a dub with a hole in it that nobody notices until playback.
-            if not rendered.path or not Path(rendered.path).exists():
-                raise ProviderError(f"line {seg.index}: provider returned no audio file")
-            if Path(rendered.path).stat().st_size < 128:
-                raise ProviderError(
-                    f"line {seg.index}: provider returned an empty audio file ({Path(rendered.path).stat().st_size} bytes)"
-                )
-            measured = ffmpeg.duration_of(rendered.path)
-            if measured is None or measured < 0.02:
-                raise ProviderError(
-                    f"line {seg.index}: provider returned {measured or 0:.3f}s of audio — nothing to place"
-                )
-            seg.audio_path = rendered.path
-            seg.raw_duration = rendered.duration or measured
-        except (ProviderError, ffmpeg.FFmpegError, OSError) as exc:
-            failures.append(f"line {seg.index}: {exc}")
-            continue
+        return provider.synthesize(
+            segment.speech,
+            segment.voice or "",
+            path,
+            style=segment.style,
+            emotion=settings.emotion or None,
+        )
+
+    store = segment_store.SegmentStore(work / "segments") if settings.segment_reuse else None
+    reused_lines = 0
+    rendered_lines = 0
+
+    def _place(seg) -> None:
+        """Stretch a line into its window and queue it for the mix.
+
+        The stretch depends on the window, which changes when a neighbour changes, so it is
+        redone every run — it costs milliseconds, unlike the synthesis it follows.
+        """
         window = seg.window or seg.duration
         speed = 1.0
         if seg.raw_duration and window > 0.1 and seg.raw_duration > window * 1.02:
@@ -830,9 +1025,110 @@ def dub(
         seg.speed = round(speed, 3)
         seg.rendered_duration = ffmpeg.duration_of(seg.audio_path)
         clips.append((seg.audio_path, seg.start))
+
+    for seg in segments:
+        check_cancel()  # before every paid call, which is the finest honest boundary
+        path = str(tts_dir / f"{seg.index:05d}.wav")
+        seg.seg_id = segment_store.segment_id(seg)
+        want = segment_store.fingerprint(
+            seg,
+            provider=tts.name,
+            model=settings.tts_model or "",
+            language=settings.target_lang,
+            sample_rate=48000,
+        )
+        if store is not None:
+            cached = store.find(seg.seg_id, want)
+            if cached is not None:
+                segment_store.restore(cached, path)
+                seg.audio_path = path
+                seg.raw_duration = cached.duration_s
+                seg.render_fingerprint = want
+                seg.regenerated = False
+                reused_lines += 1
+                _place(seg)
+                continue
+        try:
+            provider, rendered = try_stage(
+                "tts",
+                f"synthesise line {seg.index}",
+                # Bind the loop variables: a late-bound closure would synthesise the last
+                # line's text into the first line's file.
+                lambda prov, _seg=seg, _path=path: _synth(prov, _seg, _path),
+            )
+            if isinstance(rendered, tuple):  # (SynthResult, [Word, ...]) from a provider
+                rendered, words = rendered
+                if words:
+                    alignment.attach_measured(seg, words, provider.name)
+            if provider.name != active_tts.name:
+                # The fallback provider does not know the first provider's voice ids.
+                # Re-map from what it offers, and say so — a voice change is audible.
+                active_tts = provider
+                voice_map = _pick_voices(settings, active_tts, speakers)
+                for remaining in segments[seg.index :]:
+                    remaining.voice = voice_map.get(remaining.speaker, "")
+                result.warnings.append(
+                    f"voices re-assigned from {active_tts.name}: the previous provider failed mid-run"
+                )
+            # A provider can answer 200 with a zero-byte body or a silent file. Left
+            # unchecked, that line "succeeds", the timeline gets a 0s clip, and QC reports a
+            # dub with a hole in it that nobody notices until playback.
+            if not rendered.path or not Path(rendered.path).exists():
+                raise ProviderError(f"line {seg.index}: provider returned no audio file")
+            if Path(rendered.path).stat().st_size < 128:
+                raise ProviderError(
+                    f"line {seg.index}: provider returned an empty audio file "
+                    f"({Path(rendered.path).stat().st_size} bytes)"
+                )
+            measured = ffmpeg.duration_of(rendered.path)
+            if measured is None or measured < 0.02:
+                raise ProviderError(
+                    f"line {seg.index}: provider returned {measured or 0:.3f}s of audio — "
+                    "nothing to place"
+                )
+            seg.audio_path = rendered.path
+            seg.raw_duration = rendered.duration or measured
+            seg.render_fingerprint = want
+            seg.regenerated = True
+            rendered_lines += 1
+            if store is not None:
+                # Cache the *raw* render, before the window-specific stretch.
+                with store.claim(seg.seg_id) as claimed:
+                    if claimed:
+                        store.save(
+                            segment_store.RenderRecord(
+                                seg_id=seg.seg_id,
+                                fingerprint=want,
+                                audio="",
+                                audio_sha256="",
+                                duration_s=float(seg.raw_duration or measured),
+                                provider=provider.name,
+                                voice=seg.voice or "",
+                                model=settings.tts_model or "",
+                                language=settings.target_lang,
+                                target_text=seg.speech,
+                                style=seg.style or "",
+                                emotion=settings.emotion or "",
+                                sample_rate=48000,
+                                timing={"start": seg.start, "end": seg.end, "window": seg.window},
+                                meta={"words": len(seg.target_words), "alignment": seg.alignment},
+                            ),
+                            seg.audio_path,
+                        )
+        except (ProviderError, ffmpeg.FFmpegError, OSError) as exc:
+            failures.append(f"line {seg.index}: {exc}")
+            continue
+        _place(seg)
     result.steps.append(
-        Step("synthesise", time.time() - started, f"{len(clips)}/{len(segments)} lines, {tts.name}")
+        Step(
+            "synthesise",
+            time.time() - started,
+            f"{len(clips)}/{len(segments)} lines, {tts.name}, "
+            f"{rendered_lines} rendered / {reused_lines} reused",
+        )
     )
+    result.reused_segments = reused_lines
+    result.rendered_segments = rendered_lines
     if not clips:
         raise DubError(
             "no line could be synthesised. First error:\n  "
@@ -924,6 +1220,13 @@ def dub(
     # 11 — deliverables --------------------------------------------------------
     # Record what ran and what was retried *before* the report is written, so the report
     # and the job document say the same thing.
+    alignment_summary = alignment.coverage(segments)
+    result.alignment = alignment_summary
+    if alignment_summary["measured"] == 0 and segments:
+        result.warnings.append(
+            "sentence-level timing only: no provider returned word timings, and none were "
+            "invented (see docs/quality.md)"
+        )
     result.providers_used = dict(providers_used)
     result.retries = list(retries)
     if retries:
@@ -957,8 +1260,13 @@ def dub(
         max_lines=settings.qc_max_lines,
         max_reading_cps=settings.qc_max_reading_cps,
         min_display_s=settings.qc_min_display_s,
+        min_tts_ratio=settings.qc_min_tts_ratio,
+        max_audible_speed=settings.qc_max_audible_speed,
+        line_silence_ratio=settings.qc_line_silence_ratio,
+        silence_sample=settings.qc_silence_sample,
     )
     qc.save(result.qc, work / "qc.json")
+    result.review = _write_review(result, segments, settings, transcript, work / "review.json")
     result.report = _write_report(result, plan_obj, settings, transcript)
     job.finished(
         providers_used=result.providers_used,

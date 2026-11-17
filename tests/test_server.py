@@ -30,6 +30,8 @@ EXPECTED_TOOLS = {
     "dubforge_cancel_job",
     "dubforge_retry_job",
     "dubforge_cleanup_jobs",
+    # regeneration
+    "dubforge_regenerate_segments",
     # intelligence
     "dubforge_get_capabilities",
     "dubforge_validate_config",

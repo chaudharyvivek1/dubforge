@@ -84,8 +84,63 @@ def test_the_readme_docs_table_covers_every_docs_page():
     assert not missing, f"docs pages not linked from the README: {sorted(missing)}"
 
 
-def test_the_qc_check_count_in_the_docs_matches_the_code(demo_clip, tmp_path):
-    """The docs claim a number of QC checks; the code produces one. They must agree."""
+def _documented_checks() -> dict[str, str]:
+    """Every QC check named in docs/quality.md, with the severity the table claims."""
+    text = (ROOT / "docs" / "quality.md").read_text(encoding="utf-8")
+    documented: dict[str, str] = {}
+    for line in text.splitlines():
+        match = re.match(r"^\| `([a-z_]+)` \| (fail|warn) \|", line.strip())
+        if match:
+            documented[match.group(1)] = match.group(2)
+    return documented
+
+
+def test_every_documented_check_exists_and_every_check_is_documented(demo_clip, tmp_path):
+    """Compare names, not counts: a count can be right while a name is wrong."""
+    from dubforge import demo, pipeline
+    from dubforge.config import Settings
+
+    settings = Settings(
+        source_lang="en",
+        target_lang="hi",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="none",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "w"),
+        cache=False,
+    )
+    result = pipeline.dub(demo_clip, settings, output=tmp_path / "checks.mp4")
+    produced = {check["check"]: check["declared"] for check in result.qc["checks"]}
+    documented = _documented_checks()
+
+    undocumented = set(produced) - set(documented)
+    assert not undocumented, f"produced but not documented: {sorted(undocumented)}"
+
+    # `multiple_audio_tracks` is conditional, so it may be documented without being produced.
+    conditional = {"multiple_audio_tracks"}
+    phantom = set(documented) - set(produced) - conditional
+    assert not phantom, f"documented but never produced: {sorted(phantom)}"
+
+    wrong_severity = {
+        name: (produced[name], documented[name])
+        for name in set(produced) & set(documented)
+        if produced[name] != documented[name]
+    }
+    assert not wrong_severity, f"severity disagrees (code, docs): {wrong_severity}"
+
+
+def test_each_check_appears_once_in_the_docs():
+    """A duplicate row is how one check ends up documented with two different behaviours."""
+    text = (ROOT / "docs" / "quality.md").read_text(encoding="utf-8")
+    names = re.findall(r"^\| `([a-z_]+)` \| (?:fail|warn) \|", text, re.M)
+    duplicates = {name for name in names if names.count(name) > 1}
+    assert not duplicates, f"documented more than once: {sorted(duplicates)}"
+
+
+def test_the_documented_count_matches_the_conditional_reality(demo_clip, tmp_path):
+    """The prose says twenty (twenty-one for a multi-track source); the code must agree."""
     from dubforge import demo, pipeline
     from dubforge.config import Settings
 
@@ -102,13 +157,13 @@ def test_the_qc_check_count_in_the_docs_matches_the_code(demo_clip, tmp_path):
     )
     result = pipeline.dub(demo_clip, settings, output=tmp_path / "count.mp4")
     produced = len(result.qc["checks"])
+    assert produced == 23, f"a single-track source produced {produced} checks, expected 23"
 
-    words = {20: "twenty", 21: "twenty-one", 15: "fifteen", 10: "ten"}
-    claim = words.get(produced, str(produced))
-    readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
-    # The phrase, not a bare number: "20" appears inside dates and versions.
-    assert f"{claim} checks" in readme, (
-        f"the pipeline produced {produced} QC checks but README.md does not say '{claim} checks'"
+    words = {23: "twenty-three", 24: "twenty-four", 20: "twenty", 21: "twenty-one"}
+    claim = words[produced]
+    quality = (ROOT / "docs" / "quality.md").read_text(encoding="utf-8").lower()
+    assert f"{claim} checks" in quality, (
+        f"the pipeline produced {produced} checks but docs/quality.md does not say '{claim} checks'"
     )
 
 

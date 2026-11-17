@@ -114,6 +114,22 @@ calling the tool in a loop: it isolates failures, writes outputs outside the inp
 never overwrites a previous QC-passing result, and keeps the relative folder structure so
 `class-a/lesson.mp4` and `class-b/lesson.mp4` cannot collide. Read `references/batch.md`.
 
+### 5b2. Editing one line, not the film
+
+The MCP tool `dubforge_regenerate_segments` (CLI: `dubforge regen`) re-dubs a job with edited
+lines and reuses every untouched render:
+
+```
+dubforge_regenerate_segments job_id="lecture-a1b2c3d4" edits="3=यह संपादित पंक्ति है।"
+→ {"output": "…/lecture.hi.r1.mp4", "rendered_segments": 1, "reused_segments": 18}
+```
+
+* Only edited lines are synthesised again; the rest come from the segment store, whose
+  records carry the audio's SHA-256 (a truncated file is a miss, not a silent hole).
+* The result is written to a **new** file. Never tell a user the old file was replaced.
+* A retry or a fresh submit re-renders everything; regeneration is the cheap path and it
+  needs a job that already finished with a transcript.
+
 ### 5c. Cost safety when a provider is slow or failing
 
 A timeout on a non-idempotent call (synthesis, translation, transcription) is **not**
@@ -194,4 +210,6 @@ Offer a re-run with changes rather than claiming perfection.
 * `references/jobs.md` — the job tools: identity, claims, attempts, heartbeat, cancellation.
 * `references/batch.md` — folders, collisions, resume, a school or studio workflow.
 * `references/reliability.md` — retries, idempotency, provider health, fallback, events.
+* `references/review.md` — the `review.json` artifact, alignment honesty, and how to hand a
+  dub to a human reviewer.
 * `references/troubleshooting.md` — error messages and what they actually mean.

@@ -43,6 +43,10 @@ NUMERIC_RANGES: dict[str, tuple[float, float]] = {
     "qc_max_lines": (1, 4),
     "qc_max_reading_cps": (5.0, 60.0),
     "qc_min_display_s": (0.2, 10.0),
+    "qc_min_tts_ratio": (0.05, 1.0),
+    "qc_max_audible_speed": (1.0, 2.0),
+    "qc_line_silence_ratio": (0.1, 1.0),
+    "qc_silence_sample": (0, 500),
 }
 
 
@@ -143,11 +147,24 @@ class Settings:
     job_heartbeat_stale_s: float = 180.0
     job_heartbeat_interval_s: float = 15.0
 
+    # --- segment-level regeneration (0.3.0) -----------------------------------
+    # Reuse a line's raw render when its text, voice, provider, model, language, style and
+    # sample rate are unchanged. Off only for debugging.
+    segment_reuse: bool = True
+    # A regeneration keeps the edited translations; a normal run translates.
+    retranslate: bool = True
+
     # --- subtitle readability (QC) --------------------------------------------
     qc_max_chars_per_line: int = 42
     qc_max_lines: int = 2
     qc_max_reading_cps: float = 20.0
     qc_min_display_s: float = 0.8
+    # 0.3.0: measurable audio-quality thresholds. Each is a *warning*: they describe a dub
+    # worth listening to before shipping, not one that cannot be written.
+    qc_min_tts_ratio: float = 0.3  # rendered / estimated speech, below which a render is suspect
+    qc_max_audible_speed: float = 1.10  # atempo above this is audible as compression
+    qc_line_silence_ratio: float = 0.5  # silence inside one rendered line
+    qc_silence_sample: int = 40  # how many lines to measure silence on (cost bound)
 
     # --- diagnostics (filled by from_env; never set by hand) -------------------
     env_warnings: list[str] = field(default_factory=list)

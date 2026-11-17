@@ -73,10 +73,16 @@ starting any work.
 | `fallback` | `DUBFORGE_FALLBACK` | `bool` | `False` | — |
 | `job_heartbeat_stale_s` | `DUBFORGE_JOB_HEARTBEAT_STALE_S` | `float` | `180.0` | 10 – 7200 |
 | `job_heartbeat_interval_s` | `DUBFORGE_JOB_HEARTBEAT_INTERVAL_S` | `float` | `15.0` | 1 – 600 |
+| `segment_reuse` | `DUBFORGE_SEGMENT_REUSE` | `bool` | `True` | — |
+| `retranslate` | `DUBFORGE_RETRANSLATE` | `bool` | `True` | — |
 | `qc_max_chars_per_line` | `DUBFORGE_QC_MAX_CHARS_PER_LINE` | `int` | `42` | 10 – 120 |
 | `qc_max_lines` | `DUBFORGE_QC_MAX_LINES` | `int` | `2` | 1 – 4 |
 | `qc_max_reading_cps` | `DUBFORGE_QC_MAX_READING_CPS` | `float` | `20.0` | 5 – 60 |
 | `qc_min_display_s` | `DUBFORGE_QC_MIN_DISPLAY_S` | `float` | `0.8` | 0.2 – 10 |
+| `qc_min_tts_ratio` | `DUBFORGE_QC_MIN_TTS_RATIO` | `float` | `0.3` | 0.05 – 1 |
+| `qc_max_audible_speed` | `DUBFORGE_QC_MAX_AUDIBLE_SPEED` | `float` | `1.1` | 1 – 2 |
+| `qc_line_silence_ratio` | `DUBFORGE_QC_LINE_SILENCE_RATIO` | `float` | `0.5` | 0.1 – 1 |
+| `qc_silence_sample` | `DUBFORGE_QC_SILENCE_SAMPLE` | `int` | `40` | 0 – 500 |
 
 ## Limits
 

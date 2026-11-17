@@ -848,6 +848,53 @@ def build_server():
         )
         return _ok(**result, note="dry_run=true lists what would go; set dry_run=false to delete")
 
+    @mcp.tool()
+    @guard
+    def dubforge_regenerate_segments(job_id: str, edits: str = "", output: str = "") -> str:
+        """Re-dub a job with edited lines, reusing every untouched render.
+
+        `edits` is `SEGMENT=<new text>` pairs separated by newlines or `|`, where SEGMENT is a
+        segment id or its index. Only edited lines are synthesised again; the rest are reused
+        from the job's segment store. The result is written to a new file — the previous
+        output is never replaced.
+        """
+        settings = _settings()
+        if output:
+            _path(output, "output", must_exist=False)
+        mapping: dict[str, str] = {}
+        for item in (edits or "").replace("|", "\n").splitlines():
+            item = item.strip()
+            if not item:
+                continue
+            if "=" not in item:
+                raise ToolError(
+                    "invalid_argument",
+                    f"edit {item!r} has no '='",
+                    "Pass edits as SEGMENT=<new text>.",
+                )
+            key, text = item.split("=", 1)
+            mapping[key.strip()] = text
+        if not mapping:
+            raise ToolError(
+                "invalid_argument",
+                "no edits supplied",
+                "Pass edits as SEGMENT=<new text>, or use dubforge_submit_job.",
+            )
+        result = pipeline.regenerate(job_id, settings, edits=mapping, output=output or None)
+        return _ok(
+            output=result.output,
+            qc={
+                "ok": result.ok,
+                "failures": result.qc.get("failures", []),
+                "warnings": result.qc.get("warnings", []),
+            },
+            rendered_segments=result.rendered_segments,
+            reused_segments=result.reused_segments,
+            alignment=result.alignment,
+            warnings=result.warnings[:10],
+            note="a new file was written; the previous output is untouched",
+        )
+
     # ------------------------------------------------------------ intelligence
     @mcp.tool()
     @guard

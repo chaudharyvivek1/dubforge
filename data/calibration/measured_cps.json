@@ -1,0 +1,5 @@
+{
+  "counting": "chars-without-spaces",
+  "languages": {},
+  "note": "Median measured characters-per-second per language, written by scripts/calibrate.py. A language appears here only with at least 30 measured samples. Absent languages fall back to the estimates in fit.CPS and are labelled as estimates."
+}

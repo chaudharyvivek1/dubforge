@@ -25,10 +25,18 @@ from .media import Segment
 
 
 def _check(name: str, ok: bool, detail: str, severity: str = "fail") -> dict:
+    """One check.
+
+    `severity` is the *outcome* for this run (`pass` / `fail` / `warn`), which is what the
+    console summary prints. `declared` is the class of the check — whether failing it blocks
+    a release at all — because a passing `warn`-class check and a passing `fail`-class check
+    are not the same thing, and a reviewer reading `qc.json` needs to know which is which.
+    """
     return {
         "check": name,
         "ok": bool(ok),
         "severity": severity if not ok else "pass",
+        "declared": severity,
         "detail": detail,
     }
 
@@ -48,6 +56,10 @@ def report(
     max_lines: int = 2,
     max_reading_cps: float = 20.0,
     min_display_s: float = 0.8,
+    min_tts_ratio: float = 0.3,
+    max_audible_speed: float = 1.10,
+    line_silence_ratio: float = 0.5,
+    silence_sample: int = 40,
 ) -> dict:
     checks: list[dict] = []
     rendered = [s for s in segments if s.rendered_duration]
@@ -322,6 +334,67 @@ def report(
             if not unreadable and not short_display
             else f"{len(unreadable)} line(s) too long or too fast {unreadable[:5]}, "
             f"{len(short_display)} shown for under {min_display_s:g}s {short_display[:5]}",
+            severity="warn",
+        )
+    )
+
+    # --- per line: truncation, audible compression, dead air inside a render --------
+    from . import fit as fit_module
+
+    suspicious_short = []
+    for seg in segments:
+        spoken = seg.rendered_duration or 0.0
+        expected = fit_module.estimate_seconds(seg.speech, target_lang)
+        if expected > 0.5 and spoken > 0 and spoken < expected * min_tts_ratio:
+            suspicious_short.append(f"{seg.index} ({spoken:.2f}s for ~{expected:.2f}s of text)")
+    checks.append(
+        _check(
+            "short_tts_output",
+            not suspicious_short,
+            f"every render is at least {min_tts_ratio:.0%} of its text's estimated duration"
+            if not suspicious_short
+            else f"{len(suspicious_short)} line(s) far shorter than their text suggests: "
+            + "; ".join(suspicious_short[:3]),
+            severity="warn",
+        )
+    )
+
+    compressed = [seg.index for seg in segments if (seg.speed or 1.0) > max_audible_speed]
+    checks.append(
+        _check(
+            "excessive_compression",
+            not compressed,
+            f"no line played faster than {max_audible_speed:g}x (audible as compression)"
+            if not compressed
+            else f"{len(compressed)} line(s) above {max_audible_speed:g}x: {compressed[:5]}",
+            severity="warn",
+        )
+    )
+
+    dead_air: list[str] = []
+    measured = 0
+    for seg in segments[: max(0, silence_sample)]:
+        if not seg.audio_path or not Path(seg.audio_path).exists():
+            continue
+        try:
+            spans = ffmpeg.silence_spans(seg.audio_path, noise_db=-45, min_duration=0.25)
+        except ffmpeg.FFmpegError:
+            continue
+        duration = seg.rendered_duration or 0.0
+        if duration <= 0.3:
+            continue
+        measured += 1
+        silent = sum(end - start for start, end in spans)
+        if silent / duration > line_silence_ratio:
+            dead_air.append(f"{seg.index} ({silent / duration:.0%} silent)")
+    metrics["lines_silence_measured"] = measured
+    checks.append(
+        _check(
+            "silence_inside_line",
+            not dead_air,
+            f"no line is more than {line_silence_ratio:.0%} silence ({measured} line(s) measured)"
+            if not dead_air
+            else f"{len(dead_air)} line(s) mostly silent: " + "; ".join(dead_air[:3]),
             severity="warn",
         )
     )

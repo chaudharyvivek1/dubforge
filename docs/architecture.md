@@ -135,7 +135,7 @@ someone is talking, and comes back in the pauses.
 long encode: a 40-minute video is muxed in seconds.
 
 ### 11. QC
-`qc.report` writes twenty checks (plus `multiple_audio_tracks` when the source has more than one audio stream) and a metrics block. `ok` is false if any check with
+`qc.report` writes twenty-three checks (plus `multiple_audio_tracks` when the source has more than one audio stream) and a metrics block. `ok` is false if any check with
 severity `fail` fails, and the CLI then exits 1. See
 [quality.md](quality.md#the-checks).
 

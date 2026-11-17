@@ -410,6 +410,40 @@ def cmd_batch(args) -> int:
     return EXIT_OK if result.ok else EXIT_QC_FAILED
 
 
+def cmd_regen(args) -> int:
+    """Re-dub one job with edited lines, reusing every untouched render."""
+    settings = _settings(args)
+    edits: dict[str, str] = {}
+    for item in args.set or []:
+        if "=" not in item:
+            print(f"dubforge: --set needs SEGMENT=TEXT, got {item!r}", file=sys.stderr)
+            return EXIT_ERROR
+        key, text = item.split("=", 1)
+        edits[key.strip()] = text
+    if not edits and not args.output:
+        print("dubforge: nothing to do — pass --set SEGMENT=TEXT", file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        result = pipeline.regenerate(
+            args.job_id,
+            settings,
+            edits=edits,
+            output=args.out or None,
+            log=None if args.json else print,
+        )
+    except (pipeline.DubError, ProviderError, ProviderUnavailable) as exc:
+        print(f"dubforge: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    if args.json:
+        _emit_json(result.to_dict())
+    else:
+        print()
+        print(qc.summary(result.qc))
+        print(f"\n{result.rendered_segments} line(s) rendered, {result.reused_segments} reused")
+        print(f"output: {result.output}")
+    return EXIT_OK if result.ok else EXIT_QC_FAILED
+
+
 def cmd_mcp(args) -> int:
     from . import server
 
@@ -499,6 +533,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes", action="store_true", help="cleanup: actually delete (default is a dry run)"
     )
     p.set_defaults(func=cmd_jobs)
+
+    p = sub.add_parser("regen", help="re-dub one job with edited lines, reusing untouched renders")
+    common(p)
+    p.add_argument("job_id", help="the job to regenerate")
+    p.add_argument(
+        "--set",
+        action="append",
+        metavar="SEG=TEXT",
+        help="replace a line's translation, by segment id or index (repeatable)",
+    )
+    p.add_argument("--out", help="output path (default: <previous>.r<N>.mp4, never the old file)")
+    p.set_defaults(func=cmd_regen)
 
     p = sub.add_parser("batch", help="dub a folder (or a list of files) through the same pipeline")
     common(p)

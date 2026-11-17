@@ -2,7 +2,7 @@
 
 # MCP tool reference
 
-All 21 tools, generated from the running server: names, descriptions and
+All 22 tools, generated from the running server: names, descriptions and
 input schemas are read from the code, so this page is the schema.
 
 ## Response envelope
@@ -32,6 +32,7 @@ an envelope, never an exception the transport has to render.
 | [`dubforge_get_job_result`](#dubforge_get_job_result) | Output paths, QC verdict and the providers that actually ran, once a job finished. |
 | [`dubforge_get_job_status`](#dubforge_get_job_status) | Current state of a job: status, stage, progress, elapsed time, any error. |
 | [`dubforge_list_jobs`](#dubforge_list_jobs) | List jobs, newest first, with a total so you can paginate honestly. |
+| [`dubforge_regenerate_segments`](#dubforge_regenerate_segments) | Re-dub a job with edited lines, reusing every untouched render. |
 | [`dubforge_retry_job`](#dubforge_retry_job) | Re-queue a failed, interrupted or cancelled job, within the configured retry budget. |
 | [`dubforge_submit_job`](#dubforge_submit_job) | Start a dub in the background and return a job id immediately. |
 | [`dubforge_validate_config`](#dubforge_validate_config) | Check a settings file and the environment, without starting any work. |
@@ -161,6 +162,22 @@ List jobs, newest first, with a total so you can paginate honestly.
 | `limit` | no | integer | `20` |
 | `offset` | no | integer | `0` |
 | `target_lang` | no | string | `''` |
+
+
+## `dubforge_regenerate_segments`
+
+Re-dub a job with edited lines, reusing every untouched render.
+
+`edits` is `SEGMENT=<new text>` pairs separated by newlines or `|`, where SEGMENT is a
+segment id or its index. Only edited lines are synthesised again; the rest are reused
+from the job's segment store. The result is written to a new file — the previous
+output is never replaced.
+
+| Parameter | Required | Type | Default / allowed |
+| --- | --- | --- | --- |
+| `job_id` | yes | string | — |
+| `edits` | no | string | `''` |
+| `output` | no | string | `''` |
 
 
 ## `dubforge_retry_job`
