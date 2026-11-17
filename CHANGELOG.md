@@ -92,6 +92,19 @@ output paths outside the input folder, cancellation mid-pipeline, progress repor
 opt-in fallback with an announcement, provider classification, health without a network
 call, and the eleven new MCP tools including a submit → status → result round trip.
 
+### Documentation
+
+* **Generated reference docs.** `scripts/gen_reference.py` reads `Settings` and
+  `NUMERIC_RANGES`, the live MCP tool list with its JSON schemas, and the argparse tree,
+  and writes `docs/configuration.md`, `docs/mcp-tools.md` and `docs/cli.md`. CI runs
+  `--check` on Linux and Windows, so a setting, tool or flag that is added without being
+  documented fails the build instead of drifting quietly.
+* **Numeric ranges moved into one table.** `config.NUMERIC_RANGES` is now what
+  `validate()` enforces and what the docs generator prints, so a limit cannot be enforced
+  in one place and described wrongly in another.
+* Tests compare each generated file with the code that produces it, and assert that every
+  setting and every tool parameter appears in the docs.
+
 ### Known limitations
 
 * Cancellation is cooperative; provider requests and ffmpeg runs in flight are not

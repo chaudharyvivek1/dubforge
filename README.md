@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-311%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-316%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-21%20tools-6f42c1)](src/dubforge/server.py)
@@ -303,6 +303,8 @@ and check the QC of every file before it goes near a student:
 
 ## Docs
 
+Three of these are **generated from the code** (`python scripts/gen_reference.py`), and CI
+fails if they drift — a setting, tool or flag cannot be added without being documented.
 Start with the FAQ if you have a "why does it sound like this" question; start with
 `quality.md` if you are tuning a real deliverable.
 
@@ -322,6 +324,9 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [ROADMAP.md](ROADMAP.md) | what is next, and what is explicitly not planned |
 | [CREDITS.md](CREDITS.md) | every project and vendor this stands on, with licences |
 | [CHANGELOG.md](CHANGELOG.md) | what changed, and the known limitations of each release |
+| [docs/configuration.md](docs/configuration.md) | **every setting**: environment name, type, default, range (generated) |
+| [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
+| [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
 | [docs/release-0.2.0.md](docs/release-0.2.0.md) | the release checklist: scope, compatibility, verification, manual steps |
 
 ## Repository layout

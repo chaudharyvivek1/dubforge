@@ -17,6 +17,28 @@ ENV_PREFIX = "DUBFORGE_"
 
 LANGUAGE_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$")
 
+# The accepted range for every numeric setting, in one place: `validate()` reads it and
+# so does the documentation generator, so a limit can never be enforced but undocumented.
+NUMERIC_RANGES: dict[str, tuple[float, float]] = {
+    "max_speed": (0.5, 2.0),
+    "min_speed": (0.5, 1.0),
+    "rewrite_rounds": (0, 5),
+    "tail_gap_s": (0.0, 1.0),
+    "loudness_lufs": (-40.0, -5.0),
+    "true_peak_db": (-9.0, 0.0),
+    "bed_gain_db": (-60.0, 6.0),
+    "voice_gain_db": (-60.0, 12.0),
+    "max_segment_s": (1.0, 120.0),
+    "timeout_s": (5, 3600),
+    "max_input_bytes": (1, 1 << 40),
+    "max_input_seconds": (1.0, 24 * 3600.0),
+    "max_run_seconds": (1.0, 24 * 3600.0),
+    "max_estimated_usd": (0.0, 10000.0),
+    "max_concurrent_jobs": (1, 16),
+    "max_retries": (0, 10),
+    "job_retention_days": (1, 3650),
+}
+
 
 def is_language_code(code: str, allow_auto: bool = False) -> bool:
     """`hi`, `ta-IN`, `pt-BR` — not `Hindi (India)` and not a sentence."""
@@ -178,25 +200,8 @@ class Settings:
             problems.append(
                 f"source language {self.source_lang!r} is not a language code or 'auto'"
             )
-        for name, value, low, high in (
-            ("max_speed", self.max_speed, 0.5, 2.0),
-            ("min_speed", self.min_speed, 0.5, 1.0),
-            ("rewrite_rounds", self.rewrite_rounds, 0, 5),
-            ("tail_gap_s", self.tail_gap_s, 0.0, 1.0),
-            ("loudness_lufs", self.loudness_lufs, -40.0, -5.0),
-            ("true_peak_db", self.true_peak_db, -9.0, 0.0),
-            ("bed_gain_db", self.bed_gain_db, -60.0, 6.0),
-            ("voice_gain_db", self.voice_gain_db, -60.0, 12.0),
-            ("max_segment_s", self.max_segment_s, 1.0, 120.0),
-            ("timeout_s", self.timeout_s, 5, 3600),
-            ("max_input_bytes", self.max_input_bytes, 1, 1 << 40),
-            ("max_input_seconds", self.max_input_seconds, 1.0, 24 * 3600.0),
-            ("max_run_seconds", self.max_run_seconds, 1.0, 24 * 3600.0),
-            ("max_estimated_usd", self.max_estimated_usd, 0.0, 10000.0),
-            ("max_concurrent_jobs", self.max_concurrent_jobs, 1, 16),
-            ("max_retries", self.max_retries, 0, 10),
-            ("job_retention_days", self.job_retention_days, 1, 3650),
-        ):
+        for name, (low, high) in NUMERIC_RANGES.items():
+            value = getattr(self, name)
             if not low <= value <= high:
                 problems.append(f"{name}={value} is outside {low}–{high}")
         if self.max_segment_chars < 20:

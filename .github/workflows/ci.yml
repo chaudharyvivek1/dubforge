@@ -51,6 +51,12 @@ jobs:
       - name: Doctor (must not fail on a supported machine)
         run: python -m dubforge doctor
 
+      # Reference docs are generated from Settings, the live tool list and the argparse
+      # tree. If they drift, this fails rather than letting the docs describe a previous
+      # release.
+      - name: Reference docs are current
+        run: python scripts/gen_reference.py --check
+
       - name: Tests
         run: python -m pytest -q --durations=10
 
@@ -131,6 +137,9 @@ jobs:
 
       - name: Show the ffmpeg that will actually be used
         run: python -m dubforge doctor
+
+      - name: Reference docs are current
+        run: python scripts/gen_reference.py --check
 
       - name: Lint
         run: |

@@ -36,7 +36,7 @@ Run and recorded on Linux (3.10, 3.11, 3.12), macOS 3.12 and Windows 3.12 in CI:
 
 - [x] `ruff check src tests scripts`
 - [x] `ruff format --check src tests scripts`
-- [x] `python -m pytest -q` — 311 tests
+- [x] `python -m pytest -q` — 316 tests
 - [x] `python -m pytest -q tests/test_concurrency.py tests/test_workspace.py tests/test_server.py` (run separately)
 - [x] `python -m dubforge doctor`
 - [x] `python scripts/ci_demo_check.py` — the offline demo, with its expected QC failure

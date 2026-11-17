@@ -7,7 +7,7 @@ what is most fun to build.
 
 ## Now — the honest state of 0.2.0
 
-* The pipeline is complete and the offline path is fully tested (311 tests, real ffmpeg,
+* The pipeline is complete and the offline path is fully tested (316 tests, real ffmpeg,
   a real mp4 at the end of `dubforge demo`).
 * Jobs, background execution, cooperative cancellation, capabilities, limits, batch
   processing, provider health and opt-in fallback all shipped in 0.2.0.
