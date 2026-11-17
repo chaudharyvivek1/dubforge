@@ -606,3 +606,13 @@ def test_an_unwritable_event_log_never_breaks_the_work(tmp_path, monkeypatch, fa
         assert runner.wait(job.id, timeout=60).status == COMPLETED
     finally:
         runner.shutdown(wait=True)
+
+
+def test_a_completed_job_always_carries_a_verdict(store, settings, tmp_path):
+    """`completed` and `qc_ok: None` must never coexist: that is an undecided dub."""
+    source = _source(tmp_path)
+    job = store.create(source, settings)
+    store.update(job.id, status=PROCESSING, pid=1)
+    done = store.update(job.id, status=COMPLETED)  # no verdict supplied
+    assert done.qc_ok is False
+    assert "completed without a QC verdict" in done.warnings

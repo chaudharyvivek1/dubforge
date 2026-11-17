@@ -44,8 +44,8 @@ STALE_AFTER_S = 24 * 3600
 # this is "being created", not "abandoned" — treating it as stale lets a second job
 # steal a live lock, which is exactly the collision the lock exists to prevent.
 CREATING_GRACE_S = 5.0
-UNLINK_ATTEMPTS = 6
-UNLINK_DELAY_S = 0.03  # a lock older than this is from a dead run, not a live one
+UNLINK_ATTEMPTS = 10
+UNLINK_DELAY_S = 0.05  # a lock older than this is from a dead run, not a live one
 MAX_JOB_SUFFIXES = 32
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 

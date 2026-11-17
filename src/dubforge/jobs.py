@@ -367,6 +367,13 @@ class JobStore:
                 f"illegal transition for {job.id}: {job.status} → {status} "
                 f"(allowed: {', '.join(sorted(TRANSITIONS.get(job.status, ()))) or 'none'})"
             )
+        if status == COMPLETED and fields.get("qc_ok") is None:
+            # A completion without a verdict is a bug, not a state: record it as "did not
+            # pass" and say why, so a job is never both finished and undecided.
+            fields["qc_ok"] = False
+            fields.setdefault("warnings", [])
+            if isinstance(fields["warnings"], list):
+                fields["warnings"] = [*fields["warnings"], "completed without a QC verdict"]
         job.status = status
         for key, value in fields.items():
             if key in Job.__dataclass_fields__:
@@ -935,7 +942,7 @@ class JobRunner:
                 transcript_json=result.transcript_json,
                 subtitles=result.subtitles,
                 report=result.report,
-                qc_ok=result.ok,
+                qc_ok=bool(result.ok),
                 qc={
                     "ok": result.ok,
                     "failures": result.qc.get("failures", []),
