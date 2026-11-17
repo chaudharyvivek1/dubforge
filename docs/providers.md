@@ -104,6 +104,31 @@ a transcript produced by a fallback provider is not cached under the requested o
 `providers_used` in the job document, the manifest and `report.md` records what actually
 ran.
 
+## Live verification: the process, not just a flag
+
+`verified: false` is honest but it is not a procedure. `scripts/verify_providers.py` is:
+
+```bash
+python scripts/verify_providers.py --dry-run              # what would be called, and why not
+python scripts/verify_providers.py --only tts --provider elevenlabs
+python scripts/verify_providers.py --write                # record the result
+```
+
+For every adapter with a key it makes the smallest real request that proves something —
+two seconds of audio through recognition, one sentence through translation, one short phrase
+through synthesis — then checks the *shape* of the answer (segments present, text changed,
+audio longer than 50 ms). A key is never printed or stored; only the variable's name appears.
+Results go to `docs/verification.json` with the date, the DubForge version and the adapter's
+API docs link.
+
+Rules this enforces:
+
+* **it never runs in CI** — it spends money and needs live keys, so CI checks the code and
+  this checks the world;
+* **a missing key is `skipped`, not `failed`** — an unverified adapter is a fact, not an error;
+* **`verified: true` requires a row that says `ok`** — and a test fails if an adapter is
+  marked verified while the record says otherwise.
+
 ## Writing a provider
 
 ```python

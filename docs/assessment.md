@@ -90,6 +90,7 @@ next phase closes (see §5).
 | MCP | `translate_transcript`, `generate_speech` as separate stage tools | **missing** | only the pipeline and transcription are exposed; a stage tool needs segment-level caching first |
 | Providers | fallback chain when a provider fails mid-run | **done (0.2.0)** | opt-in, announced, recorded in `providers_used` |
 | Providers | health check beyond "is the key set" | **done (0.2.0)** | cheap authenticated probe for 7 adapters, honest "no probe" for the rest |
+| Providers | a repeatable live-verification process | **done (0.2.1)** | `scripts/verify_providers.py` + `docs/verification.json`; nothing verified live yet |
 | Providers | rate-limit aware retry with backoff budget | **done (0.2.0)** | `Retry-After` honoured; `max_retries` configurable |
 | Limits | input size, duration, runtime, cost, concurrency, retries, retention | **done (0.2.0)** | `limits.py`, checked before spending and between stages |
 | Batch | folder processing, failure isolation, resume, aggregate estimate | **done (0.2.0)** | `batch.py` + `dubforge batch` |

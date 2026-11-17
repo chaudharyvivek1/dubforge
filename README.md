@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-409%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-415%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-21%20tools-6f42c1)](src/dubforge/server.py)
@@ -163,6 +163,11 @@ own directory: `manifest.json` records which steps finished.
   }
 }
 ```
+
+`verified: false` on every network adapter is not a shrug: `scripts/verify_providers.py`
+makes the smallest real request each vendor allows, records the date and API version in
+`docs/verification.json`, and a test fails if an adapter claims `verified` without an `ok`
+row there. Nothing is marked verified until someone has actually spent a rupee on it.
 
 Twenty-one tools, and the intended order is in the server's instructions:
 `dubforge_doctor` → `plan_dub` → `dub_video` (or `dubforge_submit_job` for anything long)

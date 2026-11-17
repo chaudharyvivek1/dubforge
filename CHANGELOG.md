@@ -101,6 +101,17 @@ dub audio and picture both present, one audio stream), `video_codec_preserved` (
 job and attempt identifiers, provider names, error kinds — and no key, header or transcript
 ever. Off by default; an unwritable log never breaks the run.
 
+### Added — live verification harness
+
+* `scripts/verify_providers.py` is the process behind `verified: false`: for every adapter
+  with a key it makes the smallest real request that proves something (two seconds of audio,
+  one sentence, one phrase), checks the shape of the answer, and records the outcome in
+  `docs/verification.json` with the date and API docs link. Never runs in CI, never prints or
+  stores a key, treats a missing key as `skipped` rather than `failed`, and exits non-zero on
+  a real failure.
+* A test now ties `spec.verified` to that record: an adapter claiming verification without
+  an `ok` row fails the build.
+
 ### Added — documentation integrity
 
 * `tests/test_docs_integrity.py` checks the hand-written docs the way
@@ -125,7 +136,7 @@ money".
 
 ### Tests
 
-316 → 409. New: heartbeat and recovery (8), identity (7), claims including a real
+316 → 415. New: heartbeat and recovery (8), identity (7), claims including a real
 subprocess (7), attempts and transitions (7), runner behaviour (4), retry safety (8), batch
 collisions and scale (10), events (3), QC additions (3).
 
