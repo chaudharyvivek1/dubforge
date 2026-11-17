@@ -304,7 +304,9 @@ def test_job_dataclass_round_trips_through_json():
     assert again.from_dict({**job.to_dict(), "unknown_field": 1}).id == job.id
 
 
-def test_a_stale_heartbeat_is_the_signal_where_pids_cannot_be_probed(store, settings, tmp_path, monkeypatch):
+def test_a_stale_heartbeat_is_the_signal_where_pids_cannot_be_probed(
+    store, settings, tmp_path, monkeypatch
+):
     """Windows cannot probe a pid, so age is the mechanism there. Same outcome."""
     import dubforge.jobs as jobs_module
 
