@@ -59,6 +59,7 @@ def _source(tmp_path, name="lesson.mp4", data=b"x") -> Path:
 # ------------------------------------------------------------------ heartbeat
 
 
+@pytest.mark.skipif(not jobs_module._can_probe_pid(), reason="a pid is not evidence here")
 def test_a_live_process_is_not_interrupted_by_a_stale_heartbeat(store, settings, tmp_path):
     """The 0.2.0 bug: a four-minute provider call looked like a dead worker."""
     source = _source(tmp_path)

@@ -464,7 +464,11 @@ class JobStore:
         job.claim = {}
         _close_attempt(job, INTERRUPTED, error=reason)
         unlink_retry(self._claim_path(job.id))
-        self.save(job)
+        # Recovery happens on read, and reads are concurrent: several threads can reach the
+        # same conclusion at once. Serialise the write and treat a lost race as "already
+        # recorded" — the caller still gets the interrupted job it asked about.
+        with self._lock, contextlib.suppress(OSError):
+            self.save(job)
         return job
 
     def list(
