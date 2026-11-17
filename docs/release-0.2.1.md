@@ -81,7 +81,7 @@ the four skill references, `docs/architecture.md`, `docs/security.md`, `docs/ass
 `docs/release-0.2.1.md`, README, CHANGELOG, ROADMAP, and the regenerated
 `docs/{configuration,mcp-tools,cli}.md`.
 
-## 5. New tests (98 added, 415 total)
+## 5. New tests (101 added, 418 total)
 
 Heartbeat: live pid with a stale heartbeat stays `processing`; fresh heartbeat where pids
 cannot be probed; stale heartbeat where pids cannot be probed; dead pid with a fresh
@@ -108,7 +108,7 @@ unwritable log does not break the run.
  28 passed  (pipeline, run in three parts to stay inside a 300 s step)
  43 passed  (server, limits/batch/capabilities)
  37 passed  (concurrency, demo gate, CLI)
-415 total (37 of them documentation integrity, 6 the verification harness)
+418 total (37 documentation integrity, 6 the verification harness, 3 the benchmark)
 ruff check  — clean      ruff format --check — clean
 python scripts/gen_reference.py --check — current
 python -m dubforge doctor — ok
@@ -125,7 +125,10 @@ not asserted here in advance.
 
 ## 8. Performance
 
-Unchanged in the hot path: the pipeline does the same ffmpeg work. What was added is small
+Measured with `scripts/benchmark.py --sizes small` on this machine (stub providers, so this
+is engine overhead rather than vendor latency): 9.2 s of media, 1.3 MB, plan 67 ms, dub
+5.3 s, job layer +0.04 s, peak RSS 34 MB, 15 files left in the work directory. The hot path
+is unchanged: the pipeline does the same ffmpeg work. What was added is small
 and bounded — one heartbeat thread per running job (one write every 15 s), one claim file
 per job, and an output index that reads JSON without building job objects (250 records
 resolved in milliseconds, versus a full `Job` parse per record). The reference docs

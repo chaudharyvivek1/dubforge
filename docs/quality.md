@@ -133,6 +133,7 @@ nothing in the body.
 | `video_codec_preserved` | warn | the picture was streamed through, not re-encoded |
 | `audio_layout` | warn | the dub is at least 44.1 kHz with one or two channels |
 | `not_mostly_silent` | warn | less than 75% of the dub track is silence, which is how a missing line shows up |
+| `multiple_audio_tracks` | warn | only added when the source has more than one audio stream: the first was dubbed and the others were not |
 | `background_kept` | warn | a bed was mixed under the dub |
 
 `fail` means *do not ship*. `warn` means *listen to this one*. A run that ends with

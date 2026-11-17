@@ -85,7 +85,7 @@ CLI command or MCP tool changed.
 * Cleanup still refuses anything outside `<workdir>/jobs/`, and now also removes the claim
   file.
 
-### Added — QC (15 → 21 checks)
+### Added — QC (15 → 20 checks, 21 for a multi-track source)
 
 `subtitle_timing` (fail: invalid durations, overlaps), `subtitle_readability` (warn: line
 length, reading speed, minimum display time — all configurable), `streams_present` (fail:
@@ -112,6 +112,13 @@ ever. Off by default; an unwritable log never breaks the run.
 * A test now ties `spec.verified` to that record: an adapter claiming verification without
   an `ok` row fails the build.
 
+### Added — a benchmark
+
+* `scripts/benchmark.py` measures real media at three sizes (≈9 s, 55 s, 184 s) with stub
+  providers: planning time, run time, the job layer's overhead, peak RSS and the files a
+  finished job leaves behind. Not in CI (a shared runner's timing is not a measurement) and
+  vendor-free (a vendor benchmark ages in a week).
+
 ### Added — documentation integrity
 
 * `tests/test_docs_integrity.py` checks the hand-written docs the way
@@ -136,7 +143,7 @@ money".
 
 ### Tests
 
-316 → 415. New: heartbeat and recovery (8), identity (7), claims including a real
+316 → 418. New: heartbeat and recovery (8), identity (7), claims including a real
 subprocess (7), attempts and transitions (7), runner behaviour (4), retry safety (8), batch
 collisions and scale (10), events (3), QC additions (3).
 

@@ -135,7 +135,7 @@ someone is talking, and comes back in the pauses.
 long encode: a 40-minute video is muxed in seconds.
 
 ### 11. QC
-`qc.report` writes twenty-one checks and a metrics block. `ok` is false if any check with
+`qc.report` writes twenty checks (plus `multiple_audio_tracks` when the source has more than one audio stream) and a metrics block. `ok` is false if any check with
 severity `fail` fails, and the CLI then exits 1. See
 [quality.md](quality.md#the-checks).
 
@@ -191,6 +191,19 @@ The design decisions worth knowing:
 * **Retries are operation-aware.** A 429/5xx answer is retried; a network failure is retried
   only when the call is idempotent or carries a vendor-documented idempotency key. Otherwise
   the error is `kind="ambiguous"` and says the request may have been billed.
+
+## Measuring it (0.2.1)
+
+```bash
+python scripts/benchmark.py --sizes small,medium,large
+python scripts/benchmark.py --sizes small --json
+```
+
+Real media at three sizes (≈9 s, 55 s, 184 s), stub providers, and the numbers that matter
+for *this* code: planning time, wall-clock per run, the job layer's overhead on top of a
+direct call, peak RSS, and how many files a finished job leaves behind. It is deliberately
+not in CI — a shared runner's timing is not a measurement — and deliberately vendor-free,
+because a vendor benchmark ages in a week.
 
 ## Files on disk
 

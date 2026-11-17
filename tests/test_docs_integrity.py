@@ -103,10 +103,12 @@ def test_the_qc_check_count_in_the_docs_matches_the_code(demo_clip, tmp_path):
     result = pipeline.dub(demo_clip, settings, output=tmp_path / "count.mp4")
     produced = len(result.qc["checks"])
 
-    words = {21: "twenty-one", 15: "fifteen", 10: "ten"}
+    words = {20: "twenty", 21: "twenty-one", 15: "fifteen", 10: "ten"}
     claim = words.get(produced, str(produced))
-    assert claim in (ROOT / "README.md").read_text(encoding="utf-8"), (
-        f"the pipeline produced {produced} QC checks but README.md does not say '{claim}'"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
+    # The phrase, not a bare number: "20" appears inside dates and versions.
+    assert f"{claim} checks" in readme, (
+        f"the pipeline produced {produced} QC checks but README.md does not say '{claim} checks'"
     )
 
 

@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-415%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-418%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-21%20tools-6f42c1)](src/dubforge/server.py)
@@ -76,7 +76,7 @@ video ──► probe ──► separate stems ──► transcribe ──► tr
 | **Fit the clock** | every line is budgeted in characters before it is spoken; over-long lines go *back* to the translator |
 | **Stretch** | only what is still slightly long, and never past `--max-speed` (1.15x by default) |
 | **Mix** | loudness-normalised dub + original bed with sidechain ducking, then a stream copy of the picture |
-| **QC** | twenty-one checks; a `fail` exits non-zero and says which line broke |
+| **QC** | twenty checks (twenty-one when the source has several audio tracks); a `fail` exits non-zero and says which line broke |
 
 ## Install
 
@@ -328,7 +328,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [FAQ.md](FAQ.md) | 22 real questions: no keys, rushed lines, one voice, music gone, cloning, cost |
 | [docs/architecture.md](docs/architecture.md) | every stage, the data model, files on disk, how to add a provider, the design rules |
 | [docs/providers.md](docs/providers.md) | all 24 adapters: env vars, capabilities, honest quality notes, gotchas, and how to write one |
-| [docs/quality.md](docs/quality.md) | the timing arithmetic, the twenty-one QC checks, and a symptom → fix table |
+| [docs/quality.md](docs/quality.md) | the timing arithmetic, the twenty QC checks, and a symptom → fix table |
 | [docs/languages.md](docs/languages.md) | Indic coverage per stage, script/number/formality/gender traps, RTL |
 | [docs/cost.md](docs/cost.md) | list prices with sources, worked examples, how to cut the bill |
 | [docs/school.md](docs/school.md) | classroom deployment, consent, batch runs, offline mode, a first-week plan |
@@ -343,6 +343,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
 | [docs/release-0.2.1.md](docs/release-0.2.1.md) | the 0.2.1 reliability checklist: bugs, fixes, tests, risks |
+| `scripts/benchmark.py` | measure the engine on three media sizes (not in CI, on purpose) |
 | [docs/release-0.2.0.md](docs/release-0.2.0.md) | the 0.2.0 checklist: job engine, scope, compatibility |
 
 ## Repository layout
@@ -354,7 +355,7 @@ src/dubforge/
   fit.py           the timing model — chars/second per language, verdicts, budgets
   timeline.py      words → sentences → speaker labels → per-line windows → voices
   media.py         Word / Segment / Transcript, JSON round-trip, cache fingerprint
-  qc.py            the twenty-one checks, the metrics, the one-screen summary
+  qc.py            the twenty checks, the metrics, the one-screen summary
   srt.py           source / target / bilingual SRT and WebVTT
   config.py        Settings: flags, JSON file, environment; never prints a secret
   doctor.py        what this machine can and cannot do, with the fix for each gap
