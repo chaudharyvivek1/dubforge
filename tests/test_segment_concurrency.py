@@ -67,12 +67,23 @@ def test_a_waiting_worker_gets_the_lock_when_the_owner_finishes(tmp_path):
 
 
 def test_a_dead_owner_is_recovered_but_a_live_one_is_not(tmp_path, monkeypatch):
+    """Where a pid means something, a dead owner is reclaimed immediately.
+
+    On Windows a pid cannot be probed, so liveness is decided by age alone — the documented
+    contract there — and the lock has to be *old* before it is taken. The test follows the
+    platform instead of pretending both behave the same.
+    """
+    import os
+
     store = SegmentStore(tmp_path / "segments")
     seg_id = segment_id(line())
     lock = store.dir() / f"{seg_id}.lock"
     lock.write_text(
         json.dumps({"pid": 999_999_999, "token": "dead", "at": time.time()}), encoding="utf-8"
     )
+    if os.name == "nt":
+        old = time.time() - (segments.LOCK_STALE_S + 60)
+        os.utime(lock, (old, old))
     with store.claim(seg_id, wait=0.5) as acquired:
         assert acquired is True, "a lock whose process is gone must be reclaimed"
 
