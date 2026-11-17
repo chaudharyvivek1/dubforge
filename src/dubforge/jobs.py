@@ -390,6 +390,12 @@ class JobStore:
             for key, value in fields.items():
                 if key in Job.__dataclass_fields__:
                     setattr(job, key, value)
+            # Touching a job with a live pid *is* a liveness signal. Without this, a record
+            # that carries a pid but no heartbeat (every 0.2.0 job, and any caller that sets
+            # only `pid`) is indistinguishable from a crashed one where pids cannot be
+            # probed — which is exactly how a running job gets declared interrupted.
+            if job.pid and not job.heartbeat_at:
+                job.heartbeat_at = time.time()
             return self.save(job)
 
     # -------------------------------------------------------------------- read
@@ -564,7 +570,7 @@ class JobStore:
         stale_after = float(
             os.environ.get("DUBFORGE_JOB_HEARTBEAT_STALE_S", DEFAULT_HEARTBEAT_STALE_S)
         )
-        if host == socket.gethostname() and pid:
+        if host == socket.gethostname() and pid and _can_probe_pid():
             return _pid_alive(pid)
         return (time.time() - since) <= stale_after
 

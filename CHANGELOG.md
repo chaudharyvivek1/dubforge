@@ -9,6 +9,11 @@ CLI command or MCP tool changed.
 
 ### Fixed — job liveness (P0)
 
+* **Touching a job with a live pid now records a heartbeat.** A record carrying a pid but no
+  heartbeat (every 0.2.0 document, and any caller that sets only `pid`) was indistinguishable
+  from a crashed one where pids cannot be probed — the Windows path — so a running job could
+  be declared interrupted. A claim is likewise judged by pid only where pids can be probed.
+
 * **A live job was reported `interrupted` while its provider call was still running.** The
   recovery check treated a stale heartbeat as death, so a four-minute synthesis could be
   killed by a status request. Recovery now prefers the pid where a pid means something

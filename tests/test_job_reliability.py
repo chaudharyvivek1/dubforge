@@ -95,6 +95,7 @@ def test_a_stale_heartbeat_interrupts_a_job_where_pids_cannot_be_probed(
     assert store.get(job.id).status == INTERRUPTED
 
 
+@pytest.mark.skipif(not jobs_module._can_probe_pid(), reason="pids cannot be probed here")
 def test_a_dead_process_is_interrupted_even_with_a_fresh_heartbeat(store, settings, tmp_path):
     """The heartbeat cannot outlive the process: a dead pid wins."""
     source = _source(tmp_path)
