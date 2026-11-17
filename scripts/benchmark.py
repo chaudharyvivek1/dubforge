@@ -191,6 +191,8 @@ def measure_regeneration(size: str, root: Path, counts=(0, 1, 5, "10%")) -> list
             "separation_calls": first.stems_rendered,
             "reused_renders": first.reused_segments,
             "stems_reused": first.stems_reused,
+            "dialogue_mode": first.dialogue_mode,
+            "spliced_lines": first.spliced_lines,
             "wall_clock_s": round(time.perf_counter() - started, 2),
             "peak_rss_mb": _rss_mb(),
         }
@@ -222,6 +224,8 @@ def measure_regeneration(size: str, root: Path, counts=(0, 1, 5, "10%")) -> list
                 "separation_calls": result.stems_rendered,
                 "reused_renders": result.reused_segments,
                 "stems_reused": result.stems_reused,
+                "dialogue_mode": result.dialogue_mode,
+                "spliced_lines": result.spliced_lines,
                 "wall_clock_s": round(time.perf_counter() - started, 2),
                 "peak_rss_mb": _rss_mb(),
             }
@@ -260,13 +264,14 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"\n{size}: {regen_rows[0]['segments']} line(s)")
                     print(
                         f"{'case':<20}{'tts':>5}{'sep':>5}{'reused':>8}{'bed':>5}"
-                        f"{'wall':>8}{'rss':>9}"
+                        f"{'track':>11}{'wall':>8}{'rss':>9}"
                     )
                     for row in regen_rows:
                         print(
                             f"{row['case']:<20}{row['tts_calls']:>5}"
                             f"{row['separation_calls']:>5}{row['reused_renders']:>8}"
-                            f"{row['stems_reused']:>5}{row['wall_clock_s']:>7.2f}s"
+                            f"{row['stems_reused']:>5}{row.get('dialogue_mode', '-'):>11}"
+                            f"{row['wall_clock_s']:>7.2f}s"
                             f"{str(row['peak_rss_mb']):>9}"
                         )
             payload = {

@@ -206,13 +206,38 @@ table:
 | translation | skipped in a regeneration | the edits are the translation |
 | TTS renders | **yes**, per line, by fingerprint | unchanged text and voice |
 | stretch to window | no | depends on the window, which neighbours change; milliseconds |
-| dialogue track assembly | no | a changed line moves its neighbours |
+| dialogue track assembly | **spliced** when only some lines changed, **reused** when none did, assembled otherwise | only the changed lines' own ranges are muted and re-mixed; an overlap forces a full assembly |
 | loudness normalisation | no | it is a property of the whole mix |
 | ducking | no | the envelope follows the current dialogue — reusing it would be wrong |
 | mux | no | the file is rebuilt, into a temporary path first |
 
 `review.json` carries this as data: `work.reused_renders`, `work.rendered_segments`,
 `work.stems_reused`, `work.cache_hit_ratio`, `work.rebuilt_stages` and per-stage seconds.
+
+## Splicing, precisely (0.5.0)
+
+The dialogue track is kept with a manifest of every line's placement. A regeneration mutes
+`[start, start + rendered_duration]` for each changed line and mixes the new render in at the
+same start, in one ffmpeg pass:
+
+```
+[0:a] volume=enable='between(t,S1,E1)':volume=0, volume=enable='between(t,S2,E2)':volume=0 [base];
+[1:a] adelay=ms1 [n1]; [2:a] adelay=ms2 [n2];
+[base][n1][n2] amix=inputs=3:normalize=0, apad [mix]
+```
+
+Three things make it safe rather than clever:
+
+* the muted range is the line's **own** extent, never its window — a window can include a
+  neighbour's audio when two people talk over each other;
+* if a changed line overlaps another, the splice is refused and the track is assembled from
+  scratch, because zeroing a shared range would delete the other speaker;
+* the track carries a SHA-256, so a truncated or replaced file is a miss rather than a splice
+  onto the wrong audio.
+
+`tests/test_dialogue_splice.py::test_a_splice_equals_a_full_rebuild` compares the spliced
+result against a from-scratch rebuild sample by sample (tolerance 1%), because an optimisation
+that changes the mix is not an optimisation.
 
 ## Publishing an output (0.4.0)
 

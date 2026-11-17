@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import alignment, events, ffmpeg, fit, qc, srt, stems, timeline
+from . import alignment, dialogue, events, ffmpeg, fit, qc, srt, stems, timeline
 from . import limits as limits_mod
 from . import segments as segment_store
 from .config import Settings
@@ -122,6 +122,8 @@ class DubResult:
     rendered_segments: int = 0
     stems_reused: int = 0
     stems_rendered: int = 0
+    dialogue_mode: str = "assembled"
+    spliced_lines: int = 0
     transcript_json: str = ""
     subtitles: dict = field(default_factory=dict)
     qc: dict = field(default_factory=dict)
@@ -149,6 +151,8 @@ class DubResult:
             "rendered_segments": self.rendered_segments,
             "stems_reused": self.stems_reused,
             "stems_rendered": self.stems_rendered,
+            "dialogue_mode": self.dialogue_mode,
+            "spliced_lines": self.spliced_lines,
             "subtitles": self.subtitles,
             "qc": self.qc,
             "plan": self.plan,
@@ -437,6 +441,16 @@ def _validate_output(path: Path, source_info) -> None:
         )
 
 
+def _clip_hash(path: str | None) -> str:
+    """Identity of one placed clip, so a changed render is detected without decoding it."""
+    if not path or not Path(path).exists():
+        return ""
+    try:
+        return dialogue.sha256_file(path)
+    except OSError:
+        return ""
+
+
 def _separator_name(settings: Settings) -> str:
     """The separator identity for the stem cache key (the name it would resolve to)."""
     if not settings.keep_background:
@@ -623,7 +637,14 @@ def _write_review(
             "stems_reused": result.stems_reused,
             "stems_rendered": result.stems_rendered,
             "cache_hit_ratio": round(result.reused_segments / total_segments, 3),
-            "rebuilt_stages": ["dialogue track", "normalisation", "ducking", "mix", "mux"],
+            "dialogue_mode": result.dialogue_mode,
+            "spliced_lines": result.spliced_lines,
+            # The dialogue track is only rebuilt when it could not be reused or spliced;
+            # everything downstream of it always is, because it depends on the dialogue.
+            "rebuilt_stages": (
+                (["dialogue track"] if result.dialogue_mode == "assembled" else [])
+                + ["normalisation", "ducking", "mix", "mux"]
+            ),
             "stage_seconds": stage_seconds,
         },
         "segments": rows,
@@ -1262,13 +1283,84 @@ def dub(
     job.mark("synthesise", not failures, f"{len(clips)}/{len(segments)} lines")
 
     # 8 — assemble and mix -----------------------------------------------------
-    dub_track = step(
-        "assemble dub track",
-        lambda: (
-            ffmpeg.assemble_dub(clips, work / "dub.wav", info.duration, 48000),
-            f"{len(clips)} clips placed",
-        ),
-    )
+    # Partial remixing (0.5.0): if the previous track is intact and only some lines changed,
+    # mute those lines' own ranges and mix the new renders in — one pass, not one per clip.
+    dialogue_store = dialogue.DialogueStore(work) if settings.dialogue_cache else None
+    entries = [
+        dialogue.DialogueEntry(
+            seg_id=seg.seg_id or f"{seg.index:05d}",
+            start=seg.start,
+            duration=float(seg.rendered_duration or 0.0),
+            speed=float(seg.speed or 1.0),
+            clip_sha256=_clip_hash(seg.audio_path),
+        )
+        for seg in segments
+        if seg.audio_path
+    ]
+    dub_track: str | None = None
+    dialogue_mode = "assembled"
+    spliced_lines = 0
+    previous = dialogue_store.find() if dialogue_store is not None else None
+    if previous is not None and previous.entries:
+        known = previous.by_id()
+        changed = [
+            entry
+            for entry in entries
+            if known.get(entry.seg_id) is None
+            or known[entry.seg_id].clip_sha256 != entry.clip_sha256
+            or abs(known[entry.seg_id].start - entry.start) > 0.001
+        ]
+        if not changed:
+            dub_track = str(work / "dub.wav")
+            shutil.copyfile(previous.path, dub_track)
+            dialogue_mode = "reused"
+            result.steps.append(
+                Step("assemble dub track", 0.0, "reused the previous track (no line changed)")
+            )
+        else:
+            # A line that shares time with another cannot be muted without deleting the
+            # other speaker, so those fall back to a full assembly.
+            safe = [entry for entry in changed if not dialogue.overlaps_any(entry, entries)]
+            if len(safe) == len(changed) and len(changed) < len(entries):
+                by_id = {seg.seg_id or f"{seg.index:05d}": seg for seg in segments}
+                replacements = [
+                    (entry.start, known[entry.seg_id].duration, by_id[entry.seg_id].audio_path)
+                    for entry in changed
+                ]
+                started = time.time()
+                dub_track = dialogue.splice(
+                    previous.path, work / "dub.wav", replacements, info.duration, 48000
+                )
+                spliced_lines = len(changed)
+                dialogue_mode = "spliced"
+                result.steps.append(
+                    Step(
+                        "splice dub track",
+                        time.time() - started,
+                        f"{len(changed)} line(s) replaced, {len(entries) - len(changed)} kept",
+                    )
+                )
+            else:
+                result.steps.append(
+                    Step(
+                        "assemble dub track",
+                        0.0,
+                        "full assembly: a changed line overlaps another, or every line changed",
+                    )
+                )
+    if dub_track is None:
+        dub_track = step(
+            "assemble dub track",
+            lambda: (
+                ffmpeg.assemble_dub(clips, work / "dub.wav", info.duration, 48000),
+                f"{len(clips)} clips placed",
+            ),
+        )
+    if dialogue_store is not None:
+        with contextlib.suppress(OSError):
+            dialogue_store.save(dub_track, entries, info.duration, 48000)
+    result.dialogue_mode = dialogue_mode
+    result.spliced_lines = spliced_lines
     normalised = step(
         "normalise loudness",
         lambda: (

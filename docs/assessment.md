@@ -5,7 +5,7 @@ report, then implement in separate reviewed changes. **Every row below states th
 shipped in, or that it is still missing.** Where a feature is partial, it says exactly how
 far it goes.
 
-Current release: **0.4.0**. Everything in "implemented" is tested; everything else is
+Current release: **0.5.0**. Everything in "implemented" is tested; everything else is
 not, and is not advertised anywhere.
 
 ---
@@ -97,7 +97,8 @@ next phase closes (see §5).
 | Batch | folder processing, failure isolation, resume, aggregate estimate | **done (0.2.0)** | `batch.py` + `dubforge batch` |
 | Audio | multi-track export (dialogue / music / effects in one container) | **missing** | the mix is single-track |
 | Audio | per-segment regeneration | **done (0.3.0)** | `segments.py` + `dubforge regen`; reuse is per line, the mix is rebuilt |
-| Audio | partial remixing (reuse the mixed track, re-place only changed lines) | **missing** | every run rebuilds the dialogue track, ducking and mux; `review.json` says so |
+| Audio | partial remixing (splice changed lines into the previous dialogue track) | **done (0.5.0)** | one pass; refused when a changed line overlaps another |
+| Audio | reuse of the mix/ducking for untouched regions | **missing** | normalisation, ducking, mix and mux still run every time |
 | Audio | silence trimming, pitch control | **missing** | atempo only, pitch preserved by design |
 | Subtitles | line-length limits, reading-speed (CPS) validation | **done (0.2.1)** | `subtitle_readability` warns on both; the text is still whatever the translation is |
 | Subtitles | translation memory | **missing** | the glossary is the closest thing today |

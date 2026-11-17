@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-566%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-579%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-25%20tools-6f42c1)](src/dubforge/server.py)
@@ -261,11 +261,14 @@ beside `review.json` — no server, no remote assets.
 | separated background bed | yes, when the source and separator match |
 | transcription | yes |
 | TTS renders of unchanged lines | yes, by fingerprint |
-| dialogue track, normalisation, ducking, mux | **no** — they depend on the current dialogue |
+| dialogue track | **spliced** — only the changed lines' own ranges are replaced, in one pass |
+| normalisation, ducking, mix, mux | **no** — they depend on the current dialogue |
 
 `review.json` reports the real numbers (`work.reused_renders`, `work.rendered_segments`,
-`work.stems_reused`, `work.cache_hit_ratio`, `work.rebuilt_stages`), because "5 lines
-regenerated" is not "5 lines of work".
+`work.stems_reused`, `work.cache_hit_ratio`, `work.dialogue_mode`, `work.spliced_lines`,
+`work.rebuilt_stages`), because "5 lines regenerated" is not "5 lines of work". A splice is
+refused when a changed line overlaps another, and the report says `assembled` when that
+happens.
 
 ## Alignment: measured, or absent
 
@@ -396,6 +399,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/configuration.md](docs/configuration.md) | **every setting**: environment name, type, default, range (generated) |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
+| [docs/release-0.5.0.md](docs/release-0.5.0.md) | the 0.5.0 checklist: partial remixing, splice safety |
 | [docs/release-0.4.0.md](docs/release-0.4.0.md) | the 0.4.0 checklist: identity, concurrency, stem cache, review loop |
 | [docs/release-0.3.0.md](docs/release-0.3.0.md) | the 0.3.0 checklist: audit, timing rules, alignment, regeneration |
 | [docs/calibration.md](docs/calibration.md) | measured speech rate per language, or an honest estimate |

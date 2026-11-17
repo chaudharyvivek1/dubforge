@@ -163,6 +163,8 @@ class Settings:
     # Publishing over an existing file is opt-in: a silent overwrite of a good dub is not a
     # convenience, it is data loss.
     overwrite_output: bool = False
+    # Splice changed lines into the previous dialogue track instead of rebuilding it (0.5.0).
+    dialogue_cache: bool = True
     # A regeneration keeps the edited translations; a normal run translates.
     retranslate: bool = True
 

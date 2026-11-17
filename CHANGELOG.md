@@ -2,6 +2,51 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.5.0] — 2026-11-17
+
+Partial remixing. Editing five lines of a 300-line film no longer rebuilds the dialogue
+track: the changed lines are spliced into the previous one in a single pass.
+
+### Added — partial remixing (P1, the 0.4.0 "next milestone")
+
+* `dialogue.py` keeps the assembled dialogue track with a per-line manifest (`seg_id`, start,
+  rendered duration, speed, clip SHA-256) and a SHA-256 of the track itself.
+* On a regeneration, only the changed lines are replaced: their **own** time ranges are muted
+  and the new renders are mixed in at the same starts, in one ffmpeg pass whose cost does not
+  grow with the length of the film.
+* Only a line's own extent `[start, start + rendered_duration]` is muted, so a neighbour's
+  audio in an overlapping window is never cut. **If a changed line overlaps another line the
+  splice is refused** and the run falls back to a full assembly — zeroing a shared range would
+  delete the other speaker.
+* An unchanged run reuses the track outright (`dialogue_mode: "reused"`); a changed one
+  splices (`"spliced"`); anything else assembles (`"assembled"`). `review.json` records which,
+  and `work.rebuilt_stages` no longer lists the dialogue track when it was not rebuilt.
+* Splicing reuses *placement*, not processing: normalisation, ducking, the mix and the mux
+  still run, because they depend on the current dialogue.
+
+### Fixed
+
+* The `work.rebuilt_stages` claim from 0.4.0 was too coarse: it listed the dialogue track as
+  rebuilt even when the track was untouched. It is now derived from what actually ran.
+
+### Tests
+
+566 → 579. New `tests/test_dialogue_splice.py` (12): the spliced track is compared
+sample-by-sample against a from-scratch rebuild and must match within 1%, overlap refusal,
+track integrity (truncated track is a miss), reuse and splice paths through the pipeline.
+
+### Benchmark
+
+`--regen` now reports the dialogue mode beside the counts. On the small clip: full run
+assembled, 0 edits reused, 1 edit spliced, all lines edited assembled.
+
+### Known limitations
+
+* A splice is refused whenever a changed line overlaps another, which is correct but means
+  overlapping dialogue always costs a full assembly.
+* Word-level alignment is still provider-dependent and unverified live.
+* Calibration still has no measured samples.
+
 ## [0.4.0] — 2026-11-20
 
 Incremental processing, honest job identity and a working human review loop. Three confirmed

@@ -5,7 +5,7 @@ dependency and licence assessment, security risk assessment, and the phased plan
 sizes — is in [docs/assessment.md](docs/assessment.md). Ordered by what most improves a real dub, not by
 what is most fun to build.
 
-## Now — the honest state of 0.4.0
+## Now — the honest state of 0.5.0
 
 * The pipeline is complete and the offline path is fully tested (the suite is the source of
   truth for its own size — `python -m pytest --collect-only -q | tail -1` — real ffmpeg, a
@@ -25,6 +25,9 @@ what is most fun to build.
 * **0.4.0** made identity content-based, moved the segment lock *before* synthesis, cached
   the separated bed, added the review export/validate/apply loop and a static review page,
   and made publishing an output an explicit, validated, atomic step.
+* **0.5.0** added partial remixing: a regeneration splices the changed lines into the previous
+  dialogue track in one pass, and falls back to a full assembly when a changed line overlaps
+  another.
 
 ## Next
 

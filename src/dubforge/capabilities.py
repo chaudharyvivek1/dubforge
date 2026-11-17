@@ -102,6 +102,11 @@ def snapshot(settings: Settings | None = None) -> dict:
         "duration_aware_translation": _feature("translate", settings, "duration_aware"),
         "offline_translation": _feature("translate", settings, "offline"),
         "fallback_enabled": settings.fallback,
+        # Reuse contract (0.5.0): what a regeneration can reuse, and what it always rebuilds.
+        "segment_reuse": settings.segment_reuse,
+        "stem_cache": settings.stem_cache,
+        "dialogue_reuse": settings.dialogue_cache,
+        "always_rebuilt": ["normalisation", "ducking", "mix", "mux"],
     }
 
     return {
