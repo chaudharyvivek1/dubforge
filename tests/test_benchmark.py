@@ -34,7 +34,26 @@ def test_a_small_run_reports_the_numbers_it_measured(tmp_path, capsys):
     assert row["size"] == "small"
     assert row["media_seconds"] > 5
     assert row["dub_s"] > 0
-    assert row["peak_rss_mb"] > 0
+    # None is a valid answer where the platform will not report peak memory.
+    assert row["peak_rss_mb"] is None or row["peak_rss_mb"] > 0
     assert row["work_files"] > 0
     assert row["qc_checks"] >= 20, "a single-track source produces twenty checks"
     assert payload["note"].startswith("Stub providers")
+
+
+def test_rss_is_a_number_or_none_but_never_a_lie():
+    value = benchmark._rss_mb()
+    assert value is None or (isinstance(value, float) and value > 0)
+
+
+def test_the_script_imports_on_every_platform():
+    """`resource` is POSIX-only; importing the module must not depend on it."""
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, 'scripts'); import benchmark"],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parents[1]),
+    )
+    assert result.returncode == 0, result.stderr

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import resource
 import shutil
 import sys
 import tempfile
@@ -55,10 +54,50 @@ def build_media(size: str, workdir: Path) -> Path:
     return target
 
 
-def _rss_mb() -> float:
-    # ru_maxrss is KiB on Linux, bytes on macOS — normalise to MB.
+def _rss_mb() -> float | None:
+    """Peak resident memory, or None where the platform will not say.
+
+    `resource` is POSIX-only, so Windows goes through psapi. Returning None is a valid
+    answer: a benchmark that invents a number is worse than one that says "n/a".
+    """
+    try:
+        import resource
+    except ImportError:
+        return _rss_mb_windows()
+    # ru_maxrss is KiB on Linux and bytes on macOS.
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return round(peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024, 1)
+
+
+def _rss_mb_windows() -> float | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = Counters()
+        counters.cb = ctypes.sizeof(Counters)
+        ok = ctypes.windll.psapi.GetProcessMemoryInfo(
+            ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+        )
+        if ok:
+            return round(counters.PeakWorkingSetSize / (1024 * 1024), 1)
+    except Exception:  # noqa: BLE001 - an unavailable metric is not a failure
+        return None
+    return None
 
 
 def measure(size: str, root: Path) -> dict:
@@ -138,7 +177,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"{size:<7} {row['media_seconds']:>7.1f}s  {row['media_mb']:>6.1f}MB  "
                     f"plan {row['plan_ms']:>6.1f}ms  dub {row['dub_s']:>6.2f}s  "
-                    f"job +{row['job_overhead_s']:>5.2f}s  rss {row['peak_rss_mb']:>6.1f}MB  "
+                    f"job +{row['job_overhead_s']:>5.2f}s  "
+                    f"rss {(row['peak_rss_mb'] if row['peak_rss_mb'] is not None else 'n/a'):>6}MB  "
                     f"files {row['work_files']:>4}"
                 )
     finally:

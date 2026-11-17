@@ -143,7 +143,7 @@ money".
 
 ### Tests
 
-316 → 418. New: heartbeat and recovery (8), identity (7), claims including a real
+316 → 420. New: heartbeat and recovery (8), identity (7), claims including a real
 subprocess (7), attempts and transitions (7), runner behaviour (4), retry safety (8), batch
 collisions and scale (10), events (3), QC additions (3).
 
