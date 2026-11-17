@@ -1,5 +1,7 @@
 """Limits, capabilities and batch behaviour: the guard rails an agent runs into."""
 
+from pathlib import Path
+
 import pytest
 
 from dubforge import batch, capabilities, limits, pipeline
@@ -210,7 +212,7 @@ def test_batch_isolates_failures(lesson_folder, tmp_path, monkeypatch):
     sources.append(lesson_folder / "broken.mp4")
 
     result = batch.run_batch(sources, settings)
-    statuses = {item.source.split("/")[-1]: item.status for item in result.items}
+    statuses = {Path(item.source).name: item.status for item in result.items}
     assert statuses["broken.mp4"] == "failed"
     assert statuses["a.mp4"] == "completed"
     assert statuses["b.mp4"] == "completed"

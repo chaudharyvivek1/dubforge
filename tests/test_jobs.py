@@ -134,9 +134,7 @@ def test_a_job_left_by_a_dead_process_becomes_interrupted(store, settings, tmp_p
     """Never reported as completed: that is the one lie a job store must not tell."""
     source = _source(tmp_path)
     job = store.create(source, settings)
-    store.update(
-        job.id, status=PROCESSING, stage="synthesise", pid=999_999_999, started_at=time.time() - 30
-    )
+    _mark_crashed(store, job)
     recovered = store.get(job.id)
     assert recovered.status == INTERRUPTED
     assert recovered.error_kind == "interrupted"
