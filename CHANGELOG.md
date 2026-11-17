@@ -83,7 +83,7 @@ All of them support `--json`.
 
 ### Tests
 
-235 → 309. New: lifecycle transitions, atomic job writes, restart recovery, interrupted
+235 → 311. New: lifecycle transitions, atomic job writes, restart recovery, interrupted
 vs failed, cancellation of queued and running jobs, retry budget, pagination, cleanup
 boundaries, duplicate submission, every limit (bytes, duration, runtime, estimate), limit
 overrides from the environment, capabilities derived from the registry, a stub not making

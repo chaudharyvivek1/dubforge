@@ -31,6 +31,32 @@ def settings(tmp_path) -> Settings:
     return Settings(target_lang="hi", workdir=str(tmp_path / "work"))
 
 
+def _mark_crashed(store: JobStore, job: Job) -> None:
+    """Make a job look like it was left behind by a process that died.
+
+    POSIX can probe a pid, so a pid that cannot exist is the signal. Windows cannot
+    probe safely, so the mechanism there is a stale heartbeat — the documented
+    platform difference, exercised rather than papered over.
+    """
+    if os.name == "nt":
+        store.update(
+            job.id,
+            status=PROCESSING,
+            stage="synthesise",
+            pid=os.getpid(),
+            heartbeat_at=time.time() - 600,
+            started_at=time.time() - 30,
+        )
+    else:
+        store.update(
+            job.id,
+            status=PROCESSING,
+            stage="synthesise",
+            pid=999_999_999,
+            started_at=time.time() - 30,
+        )
+
+
 def _source(tmp_path, name="lesson.mp4", data=b"x"):
     path = tmp_path / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +160,7 @@ def test_recover_lists_what_it_fixed(store, settings, tmp_path):
     jobs = []
     for name in ("a.mp4", "b.mp4"):
         job = store.create(_source(tmp_path, name), settings)
-        store.update(job.id, status=PROCESSING, pid=999_999_999)
+        _mark_crashed(store, job)
         jobs.append(job.id)
     recovered = store.recover()
     assert {job.id for job in recovered} == set(jobs)
@@ -276,3 +302,31 @@ def test_job_dataclass_round_trips_through_json():
     again = Job.from_dict(json.loads(json.dumps(job.to_dict())))
     assert again.id == job.id and again.providers == {"tts": "sarvam"}
     assert again.from_dict({**job.to_dict(), "unknown_field": 1}).id == job.id
+
+
+def test_a_stale_heartbeat_is_the_signal_where_pids_cannot_be_probed(store, settings, tmp_path, monkeypatch):
+    """Windows cannot probe a pid, so age is the mechanism there. Same outcome."""
+    import dubforge.jobs as jobs_module
+
+    source = _source(tmp_path)
+    job = store.create(source, settings)
+    store.update(
+        job.id,
+        status=PROCESSING,
+        stage="synthesise",
+        pid=os.getpid(),
+        heartbeat_at=time.time() - 600,
+        started_at=time.time() - 30,
+    )
+    monkeypatch.setattr(jobs_module, "_pid_alive", lambda pid: True)  # never believes a pid is dead
+    assert store.get(job.id).status == INTERRUPTED
+
+
+def test_a_fresh_heartbeat_keeps_a_live_job_alive(store, settings, tmp_path, monkeypatch):
+    import dubforge.jobs as jobs_module
+
+    source = _source(tmp_path)
+    job = store.create(source, settings)
+    store.update(job.id, status=PROCESSING, pid=os.getpid(), heartbeat_at=time.time())
+    monkeypatch.setattr(jobs_module, "_pid_alive", lambda pid: True)
+    assert store.get(job.id).status == PROCESSING
