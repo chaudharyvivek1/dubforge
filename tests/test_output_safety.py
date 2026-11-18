@@ -62,7 +62,9 @@ def test_a_failed_mux_leaves_no_partial_file_and_keeps_the_previous_output(tmp_p
     # `stage_cache=False` on purpose: with the cache on, the mux is reused and never runs, so
     # the failure path this test exists for would not be exercised at all.
     with pytest.raises((ffmpeg.FFmpegError, pipeline.DubError)):
-        pipeline.dub(clip, _settings(tmp_path, overwrite_output=True, stage_cache=False), output=out)
+        pipeline.dub(
+            clip, _settings(tmp_path, overwrite_output=True, stage_cache=False), output=out
+        )
 
     assert out.read_bytes() == before, "a failed regeneration must not destroy the good file"
     assert not list(tmp_path.glob("*.partial*")), "an incomplete mux must not survive"

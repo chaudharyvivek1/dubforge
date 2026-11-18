@@ -194,10 +194,9 @@ def test_the_review_records_what_was_actually_rebuilt(tmp_path):
     assert work["mix_mode"] == "reused"
     assert work["rebuilt_stages"] == [], "nothing was rebuilt, so nothing may be listed"
     fresh = pipeline.dub(
-        demo.build_clip(tmp_path / "fresh.mp4"), _settings(tmp_path, stage_cache=False),
+        demo.build_clip(tmp_path / "fresh.mp4"),
+        _settings(tmp_path, stage_cache=False),
         output=tmp_path / "c.mp4",
     )
     fresh_work = json.loads(Path(fresh.review).read_text(encoding="utf-8"))["work"]
-    assert "ducking" in fresh_work["rebuilt_stages"], (
-        "a run that rebuilt the mix must say so"
-    )
+    assert "ducking" in fresh_work["rebuilt_stages"], "a run that rebuilt the mix must say so"
