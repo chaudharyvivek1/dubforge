@@ -11,9 +11,12 @@ thing still exists.
 """
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
+
+from dubforge import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKDOWN = sorted(
@@ -82,6 +85,62 @@ def test_the_readme_docs_table_covers_every_docs_page():
     pages = {path.name for path in (ROOT / "docs").glob("*.md")}
     missing = pages - linked
     assert not missing, f"docs pages not linked from the README: {sorted(missing)}"
+
+
+def _inventory() -> dict[str, dict]:
+    """The generated QC inventory: the authoritative list, read from `docs/qc-inventory.md`.
+
+    Generated from `qc.py` by `scripts/gen_reference.py` and gated by `--check` in CI, so this
+    is a reading of the *source*, not a second hand-maintained list. Comparing against it is
+    what makes the count check structural rather than a search for a number.
+    """
+    text = (ROOT / "docs" / "qc-inventory.md").read_text(encoding="utf-8")
+    rows: dict[str, dict] = {}
+    for line in text.splitlines():
+        match = re.match(r"^\| `([a-z_]+)` \| (fail|warn) \| (.+?) \|$", line.strip())
+        if match:
+            rows[match.group(1)] = {"severity": match.group(2), "when": match.group(3)}
+    assert rows, "docs/qc-inventory.md has no rows — run scripts/gen_reference.py"
+    return rows
+
+
+def _stated_counts() -> dict[str, list[str]]:
+    """Every page that states a QC count, with the phrase it used.
+
+    Matches the *phrase*, never a bare number: "23" appears inside dates, versions and
+    release notes, which is how a stale count survived four releases.
+    """
+    words = {
+        23: "twenty-three",
+        24: "twenty-four",
+        20: "twenty",
+        21: "twenty-one",
+        15: "fifteen",
+        10: "ten",
+    }
+    pattern = re.compile(
+        r"\b(" + "|".join(words.values()) + r"|\d+)\s+(?:qc\s+)?checks\b", re.IGNORECASE
+    )
+    stated: dict[str, list[str]] = {}
+    for page in _documentation_pages():
+        if page.name.startswith("release-"):
+            continue  # a dated record of what was true then, not a claim about now
+        for match in pattern.finditer(page.read_text(encoding="utf-8")):
+            try:
+                label = str(page.relative_to(ROOT))
+            except ValueError:  # a page outside the repo, e.g. a fixture in a test
+                label = page.name
+            stated.setdefault(label, []).append(match.group(0))
+    return stated
+
+
+def _documentation_pages() -> list[Path]:
+    """Every markdown page under docs/, discovered rather than listed.
+
+    A new page is covered the moment it exists — that is the whole point, because the stale
+    "15 checks" row lived in a page the old test never read.
+    """
+    return sorted(path for path in (ROOT / "docs").glob("*.md"))
 
 
 def _plain_line(line: str) -> str:
@@ -216,3 +275,247 @@ def test_no_doc_promises_a_tool_that_does_not_exist():
                     continue
                 missing.setdefault(name, f"{path.relative_to(ROOT)}:{index + 1}")
     assert not missing, f"documented but not implemented: {missing}"
+
+
+# ---------------------------------------------------------------------------------------
+# Phase 6: the inventory is generated, and every page is checked against it.
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_quality_table_matches_the_generated_inventory_exactly():
+    """Both directions, names and severities — a table row is a claim about the code."""
+    inventory = _inventory()
+    documented = _documented_checks()
+    missing = sorted(set(inventory) - set(documented))
+    phantom = sorted(set(documented) - set(inventory))
+    assert not missing, f"in the code but not documented in docs/quality.md: {missing}"
+    assert not phantom, f"documented but not in the code: {phantom}"
+    wrong = {
+        name: (inventory[name]["severity"], documented[name])
+        for name in set(inventory) & set(documented)
+        if inventory[name]["severity"] != documented[name]
+    }
+    assert not wrong, f"severity disagrees (code, docs/quality.md): {wrong}"
+
+
+def test_a_conditional_check_is_documented_as_conditional():
+    """A check that depends on the *input* must be documented as conditional.
+
+    Several checks sit inside `if original and output …`, which a normal run always satisfies —
+    labelling those "conditional" in prose would be noise. `multiple_audio_tracks` depends on
+    the source itself, so a reader deciding whether it applies to them needs to be told.
+    """
+    inventory = _inventory()
+    input_dependent = {name for name, row in inventory.items() if "source_info" in row["when"]}
+    assert "multiple_audio_tracks" in input_dependent, (
+        "the inventory lost the input-dependent check"
+    )
+    conditional = input_dependent
+    quality = (ROOT / "docs" / "quality.md").read_text(encoding="utf-8")
+    for name in sorted(conditional):
+        row = next(
+            (line for line in quality.splitlines() if line.strip().startswith(f"| `{name}`")), ""
+        )
+        assert row, f"{name} has no row in docs/quality.md"
+        assert (
+            "conditional" in row.lower() or "only when" in row.lower() or "when the" in row.lower()
+        ), f"docs/quality.md does not say that {name} is conditional: {row[:90]}"
+
+
+def test_no_page_states_a_qc_count_that_the_code_does_not_produce(demo_clip, tmp_path):
+    """The defect this phase exists for: one page said 15, another 23.
+
+    The number is read from the *code*, then every page that states a count is required to
+    agree. Release notes are excluded: they record what was true at the time.
+    """
+    from dubforge import demo, pipeline
+    from dubforge.config import Settings
+
+    settings = Settings(
+        source_lang="en",
+        target_lang="hi",
+        asr="stub",
+        translator="stub",
+        tts="stub",
+        separator="none",
+        script=demo.DEMO_SCRIPT,
+        workdir=str(tmp_path / "w"),
+        cache=False,
+    )
+    produced = len(pipeline.dub(demo_clip, settings, output=tmp_path / "count.mp4").qc["checks"])
+    words = {produced: {23: "twenty-three", 24: "twenty-four"}.get(produced, str(produced))}
+    allowed = {str(produced), *words.values()}
+    # a page may also mention the multi-track figure, one higher
+    allowed |= {str(produced + 1), {23: "twenty-four"}.get(produced, str(produced + 1))}
+
+    wrong: dict[str, list[str]] = {}
+    for page, phrases in _stated_counts().items():
+        bad = [phrase for phrase in phrases if phrase.split()[0].lower() not in allowed]
+        if bad:
+            wrong[page] = bad
+    assert not wrong, f"a page states a QC count the code does not produce ({produced}): {wrong}"
+
+
+def test_every_docs_page_is_scanned_by_these_tests():
+    """The old test read one page by name, which is why a stale row survived four releases."""
+    scanned = {page.name for page in _documentation_pages()}
+    on_disk = {path.name for path in (ROOT / "docs").glob("*.md")}
+    assert scanned == on_disk, "a docs page exists that the tests do not see"
+    assert len(scanned) > 5, "the glob is not finding the pages"
+
+
+def test_documented_provider_counts_match_the_registry():
+    """A page may state a provider total; it must be the number the registry has."""
+    from dubforge.providers import registry
+
+    total = sum(len(registry.names(kind)) for kind in registry.REGISTRY)
+    claims: dict[str, list[str]] = {}
+    # Only *totals* are claims about the registry: "a probe for 7 adapters" is a subset and
+    # perfectly true, so the pattern asks for the words that mean "all of them".
+    pattern = re.compile(
+        r"\b(?:all\s+)?(\d+)\s+adapters\s+behind\b|\ball\s+(\d+)\s+adapters\b", re.IGNORECASE
+    )
+    for page in _documentation_pages():
+        if page.name.startswith("release-"):
+            continue
+        for match in pattern.finditer(page.read_text(encoding="utf-8")):
+            claimed = int(match.group(1) or match.group(2))
+            if claimed != total:
+                claims.setdefault(page.name, []).append(match.group(0))
+    assert not claims, f"the registry has {total} adapters; these pages disagree: {claims}"
+
+
+def test_every_adapter_named_in_the_provider_page_exists():
+    """The support table is a promise; a stale row promises an adapter that is gone."""
+    from dubforge.providers import registry
+
+    known = {name for kind in registry.REGISTRY for name in registry.names(kind)}
+    text = (ROOT / "docs" / "providers.md").read_text(encoding="utf-8")
+    named = set(re.findall(r"^\| `([a-z0-9_]+)` \|", text, re.M))
+    assert named, "docs/providers.md has no adapter rows"
+    unknown = sorted(named - known)
+    assert not unknown, f"docs/providers.md names adapters that do not exist: {unknown}"
+
+
+def test_cli_commands_named_in_the_docs_exist():
+    """Every `dubforge <command>` in the docs must be a real subcommand."""
+    from dubforge.cli import build_parser
+
+    parser = build_parser()
+    subcommands = set()
+    for action in parser._actions:
+        choices = getattr(action, "choices", None)
+        if isinstance(choices, dict):
+            subcommands |= set(choices)
+    assert subcommands, "could not read the CLI subcommands"
+    named: dict[str, set[str]] = {}
+    pattern = re.compile(r"`dubforge ([a-z][a-z-]*)")
+    for page in _documentation_pages():
+        for match in pattern.finditer(page.read_text(encoding="utf-8")):
+            command = match.group(1)
+            if command not in subcommands:
+                named.setdefault(page.name, set()).add(command)
+    assert not named, f"docs name CLI commands that do not exist: {named}"
+
+
+def test_the_committed_verification_record_is_what_the_writer_produces():
+    """A stale record is a lie about what has been verified — it must not rot silently."""
+    import json
+
+    from dubforge import verify
+
+    committed = json.loads(verify.RECORD.read_text(encoding="utf-8"))
+    verdict = verify.validate(committed)
+    assert verdict["ok"], f"docs/verification.json does not validate: {verdict['problems']}"
+    assert committed.get("schema") == verify.SCHEMA, "the record has no schema version"
+
+    if not committed.get("results"):
+        # never run: the file must be exactly what `save()` writes today, so a version bump or
+        # a schema change cannot leave it describing a release that no longer exists
+        fresh = {
+            "schema": verify.SCHEMA,
+            "generated_at": None,
+            "dubforge_version": __version__,
+            "note": committed["note"],
+            "results": [],
+        }
+        assert committed["dubforge_version"] == __version__, (
+            f"the empty record says {committed['dubforge_version']} but this is {__version__}"
+        )
+        assert committed == fresh, "the committed record differs from what the writer produces"
+
+
+# ---------------------------------------------------------------------------------------
+# Regression tests for the defect this phase fixed: the checker must fail on it.
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_checker_would_have_caught_the_stale_15_checks_row(tmp_path, monkeypatch):
+    """Proof, not assertion: reconstruct the defect and watch the check fail.
+
+    `docs/assessment.md` said "15 checks" in one table while another section said 23, and the
+    old test — which read only `docs/quality.md` — never looked. This builds a page with the
+    old row and requires the scanner to see it.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "assessment.md").write_text(
+        "# Assessment\n\n| QC | 15 checks, metrics, `qc.json`, `report.md` | `qc.py` | stable |\n",
+        encoding="utf-8",
+    )
+    (docs / "fine.md").write_text(
+        "# Fine\n\nThe pipeline runs twenty-three checks.\n", encoding="utf-8"
+    )
+    # patch this module's own helper: the test module is imported as `test_docs_integrity`
+    monkeypatch.setattr(
+        sys.modules[__name__], "_documentation_pages", lambda: sorted(docs.glob("*.md"))
+    )
+    stated = _stated_counts()
+    assert "assessment.md" in stated, "the scanner missed a page that states a count"
+    assert stated["assessment.md"] == ["15 checks"]
+    assert "fine.md" in stated and stated["fine.md"] == ["twenty-three checks"]
+
+
+def test_the_quality_table_comparison_would_catch_a_phantom_row(tmp_path, monkeypatch):
+    """A row for a check that no longer exists must fail, not pass quietly."""
+    quality = tmp_path / "quality.md"
+    quality.write_text(
+        "| check | severity | passes when |\n|---|---|---|\n"
+        "| `every_line_has_audio` | fail | audio exists |\n"
+        "| `a_check_that_was_removed` | fail | nothing |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_documented_checks",
+        lambda: dict(
+            re.findall(
+                r"^\| `([a-z_]+)` \| (fail|warn) \|", quality.read_text(encoding="utf-8"), re.M
+            )
+        ),
+    )
+    documented = _documented_checks()
+    inventory = _inventory()
+    phantom = sorted(set(documented) - set(inventory))
+    assert phantom == ["a_check_that_was_removed"], (
+        "the comparison did not notice a documented check that is not in the code"
+    )
+
+
+def test_the_documented_python_and_platform_support_matches_pyproject_and_ci():
+    """README, pyproject and the CI matrix must agree about what is supported."""
+    import tomllib
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requires = pyproject["project"]["requires-python"]
+    assert requires == ">=3.10", f"pyproject says {requires}; the docs and CI say 3.10+"
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for version in ("3.10", "3.11", "3.12"):
+        assert f'"{version}"' in workflow, f"CI does not test Python {version}"
+    for runner in ("ubuntu-latest", "macos-latest", "windows"):
+        assert runner in workflow, f"CI does not test {runner}"
+
+    platforms = (ROOT / "docs" / "platforms.md").read_text(encoding="utf-8")
+    for name in ("Linux", "macOS", "Windows"):
+        assert name in platforms, f"docs/platforms.md does not mention {name}"

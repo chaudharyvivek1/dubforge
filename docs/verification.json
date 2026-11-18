@@ -1,6 +1,7 @@
 {
+  "schema": 1,
   "generated_at": null,
-  "dubforge_version": "0.2.1",
-  "note": "Produced by scripts/verify_providers.py against live APIs. An adapter may be marked verified only when its row here says ok. Never contains keys.",
+  "dubforge_version": "0.9.2",
+  "note": "Produced by the verification harness against live APIs. An adapter may be marked verified only when its row here says ok. Never contains keys.",
   "results": []
 }

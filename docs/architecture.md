@@ -358,6 +358,22 @@ change does not. `REQUEST_FIELDS` covers what changes the artifact — including
 `lipsync` and `separator` — and deliberately excludes limits, logging and local paths. A
 supplied transcript enters the identity as a hash of its bytes, never as a path.
 
+## Recovery after a real crash (measured)
+
+A worker that dies mid-job is detected by its heartbeat, not by its process. Measured on
+0.9.1 by killing a worker with `SIGKILL` while it held a claim:
+
+* **immediately after the kill**, a fresh `JobStore` still reports the job `processing` — correct,
+  because a job that has been silent for 0.2 s is not dead;
+* **once the heartbeat is older than `DEFAULT_HEARTBEAT_STALE_S` (180 s)**, the next read
+  reconciles the job to `interrupted`, clears the claim and the pid, and records
+  `no heartbeat from the worker running this job` as the error.
+
+Two consequences worth knowing when operating this: recovery latency after a crash is **up to
+180 seconds** (override with `DUBFORGE_JOB_HEARTBEAT_STALE_S`), and a job whose process is alive
+but not heartbeating is deliberately **not** taken over — the store prefers waiting to stealing.
+Attempt history is not incremented by recovery in 0.9.1; a retry creates the next attempt.
+
 ## Polling a job: the deadline and the classification (0.9.1)
 
 `JobRunner.wait(job_id, timeout)` is the only blocking call in the job API, so it has to be

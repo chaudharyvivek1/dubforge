@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-668%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-681%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-27%20tools-6f42c1)](src/dubforge/server.py)
@@ -425,7 +425,8 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [FAQ.md](FAQ.md) | 22 real questions: no keys, rushed lines, one voice, music gone, cloning, cost |
 | [docs/architecture.md](docs/architecture.md) | every stage, the data model, files on disk, how to add a provider, the design rules |
 | [docs/providers.md](docs/providers.md) | all 24 adapters: env vars, capabilities, honest quality notes, gotchas, and how to write one |
-| [docs/quality.md](docs/quality.md) | the timing arithmetic, the twenty-three QC checks, and a symptom → fix table |
+| [docs/quality.md](docs/quality.md) | the timing arithmetic, the QC checks, and a symptom → fix table |
+| [docs/qc-inventory.md](docs/qc-inventory.md) | the authoritative check list, generated from `qc.py` (names, severities, when each runs) |
 | [docs/languages.md](docs/languages.md) | Indic coverage per stage, script/number/formality/gender traps, RTL |
 | [docs/cost.md](docs/cost.md) | list prices with sources, worked examples, how to cut the bill |
 | [docs/school.md](docs/school.md) | classroom deployment, consent, batch runs, offline mode, a first-week plan |
@@ -440,6 +441,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
 | [docs/verification.md](docs/verification.md) | the live-verification procedure, how the flag is derived, what a green row does not mean |
+| [docs/release-0.9.2.md](docs/release-0.9.2.md) | the 0.9.2 checklist: the QC inventory, docs coverage, the verification record |
 | [docs/release-0.9.1.md](docs/release-0.9.1.md) | the 0.9.1 checklist: polling deadlines, error classification, registry atomicity |
 | [docs/release-0.9.0.md](docs/release-0.9.0.md) | the 0.9.0 checklist: expiry, local vs network, contradictions |
 | [docs/release-0.8.0.md](docs/release-0.8.0.md) | the 0.8.0 checklist: the verification ledger, plan/run/import |

@@ -70,7 +70,7 @@ next phase closes (see §5).
 | Bed | demucs / mid-side separation, sidechain ducking, limiter | `providers/separate.py`, `ffmpeg.py` | stable |
 | Translation | 5 providers + offline stub, glossary pinning, context brief | `providers/translate.py` | stable |
 | Subtitles | SRT/VTT write, bilingual SRT, SRT import (`--transcript x.srt`) | `srt.py` | stable |
-| QC | 15 checks, metrics, `qc.json`, `report.md` | `qc.py` | stable |
+| QC | 23 checks on a normal run (24 when the source has more than one audio track), metrics, `qc.json`, `review.json`, `report.md` — the authoritative list is the generated [qc-inventory.md](qc-inventory.md) | `qc.py` | stable |
 | Jobs | directory per source path, lock, manifest, resume, content-keyed cache | `workspace.py` | stable |
 | Config | env + JSON file, strict booleans, validation, actionable errors | `config.py` | stable |
 | Diagnosis | `doctor`, `providers`, `voices`, `plan` | `cli.py` | stable |

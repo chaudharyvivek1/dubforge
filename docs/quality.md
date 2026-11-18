@@ -106,6 +106,11 @@ enough to survive a phone speaker. −14 for podcast, −23 for broadcast EBU R1
 
 ## 5. The checks
 
+The authoritative list — names, declared severities, and when each one is emitted — is
+generated from `qc.py` into [qc-inventory.md](qc-inventory.md). This section is the *why*: what
+each check measures and what to do about it. A test requires the two to agree, so a check cannot
+exist in the code and be missing here, and a row here cannot name a check that was removed.
+
 `qc.json`, printed by `dubforge dub` and in `report.md`. `fail` exits non-zero.
 Twenty-three checks for a single-audio-track source (twenty-four when the source has
 several audio tracks, because `multiple_audio_tracks` is only emitted then), because the

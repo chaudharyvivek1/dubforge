@@ -2,6 +2,65 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.9.2] — 2026-11-18
+
+Documentation consistency (Phase 6 of the quality roadmap). One document contradicted another
+about how many QC checks exist, and the test meant to catch that only read one page.
+
+### Fixed — the QC inventory now comes from the source
+
+* `docs/assessment.md` said "**15 checks**" in its implemented-inventory table while another
+  section of the same file said twenty-three. The count is 23 on a normal run (24 when the
+  source has more than one audio track), which the README and `docs/quality.md` already had
+  right — the stale row was the defect, and the brief's "README vs assessment" framing was
+  half the story: the contradiction was *inside* the assessment.
+* `scripts/gen_reference.py` now generates **`docs/qc-inventory.md`** by parsing `qc.py` with
+  `ast`: every `_check("<name>", …, severity=…)` call, deduplicated by name, labelled with the
+  branch it sits in (`always`, `always (both branches)`, `only when <condition>`). It is gated
+  by `--check` in CI like the other three generated pages, so it cannot drift from the code.
+  Reading it out of the AST also settled a question the docs had been vague about: 26 call
+  sites, 24 distinct checks, two of them emitted in two forms (`dub_is_audible`,
+  `duration_preserved`), one input-dependent (`multiple_audio_tracks`).
+
+### Fixed — the integrity tests cover every page
+
+`tests/test_docs_integrity.py` used to read `docs/quality.md` by name, which is exactly why a
+stale row in `docs/assessment.md` survived four releases. It now:
+
+* discovers pages with `docs/*.md` rather than a list, so a new page is covered the moment it
+  exists (`test_every_docs_page_is_scanned_by_these_tests` asserts the glob sees them all);
+* compares `docs/quality.md`'s table to the generated inventory **in both directions**, names and
+  severities, and requires input-dependent checks to be documented as conditional;
+* scans every non-release page for a stated QC count and requires it to be the number the code
+  produces — matching the phrase ("fifteen checks"), never a bare number;
+* checks provider totals against the registry (subset claims like "a probe for 7 adapters" are
+  left alone, because they are true);
+* checks that every adapter named in `docs/providers.md` exists;
+* checks that every `dubforge <command>` named in the docs is a real subcommand;
+* checks that the committed `docs/verification.json` validates, carries a schema, and — while it
+  is still empty — is exactly what the writer produces today;
+* and asserts README/pyproject/CI agree on Python 3.10+ and on Linux/macOS/Windows.
+
+Two regression tests reconstruct the original defect (a page saying "15 checks", and a phantom
+table row) and require the checker to fail on it, so the fix is proven rather than asserted.
+
+### Fixed — `docs/verification.json`
+
+It was written by the 0.2.1 script: no `schema`, `dubforge_version: "0.2.1"`, zero rows.
+Regenerated with the current writer (`verify.save`), so it now says schema 1 and 0.9.2, with the
+same note and still **zero rows** — nothing was verified live and nothing was fabricated.
+
+### Added
+
+* `docs/architecture.md` documents the recovery window measured in Phase 1: a `SIGKILL`ed worker
+  is reconciled to `interrupted` only once its heartbeat is older than 180 s, a live-but-silent
+  worker is deliberately not taken over, and recovery does not increment attempt history.
+* `docs/quality.md` points at the generated inventory as the authority and keeps the prose.
+
+### Tests
+
+668 → 681.
+
 ## [0.9.1] — 2026-11-18
 
 Polling reliability, timeout correctness and error classification. 0.9.0's retry treated the
