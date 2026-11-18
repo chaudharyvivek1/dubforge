@@ -122,7 +122,25 @@ REQUEST_FIELDS = (
 
 
 class JobError(RuntimeError):
-    """A job operation that cannot be completed, with a message a caller can act on."""
+    """A job operation that cannot be completed, with a message a caller can act on.
+
+    `kind` classifies *why*, because a caller's correct reaction depends on it:
+
+    * `missing` — no record exists. Polling may wait for one to appear; a one-off call reports
+      "no job".
+    * `unreadable` — the record exists but could not be read (permissions, a Windows sharing
+      violation during `os.replace`). Transient, but **not** the same as missing: retrying is
+      reasonable, reporting "no job" is a lie about a job that exists.
+    * `corrupt` — the record exists and is not a job. Never transient; never silently ignored.
+    * `job` — everything else (an illegal transition, a lost claim). The default, so existing
+      callers that catch `JobError` keep working unchanged.
+
+    The message is unchanged for every existing case; `kind` is additive.
+    """
+
+    def __init__(self, message: str = "", kind: str = "job") -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 def _can_probe_pid() -> bool:
@@ -451,7 +469,7 @@ class JobStore:
         with self._lock:
             job = self.get(job_id, recover=False)
             if job is None:
-                raise JobError(f"no job {job_id!r}")
+                raise JobError(f"no job {job_id!r}", kind="missing")
             if token is not None and job.claim and job.claim.get("token") != token:
                 raise JobError(
                     f"job {job_id} is owned by another worker "
@@ -472,18 +490,43 @@ class JobStore:
             return self.save(job)
 
     # -------------------------------------------------------------------- read
-    def get(self, job_id: str, recover: bool = True) -> Job | None:
+    def get(self, job_id: str, recover: bool = True, strict: bool = False) -> Job | None:
+        """Read one job.
+
+        Lenient by default, because most callers want "give me the job or nothing" and that is
+        what they have always got. `strict=True` classifies the failure instead of hiding it,
+        which is what a *polling* caller needs: until 0.9.1 a corrupt record, an unreadable one
+        and a genuinely absent one all looked like `None`, and the poll loop turned all three
+        into "no job" — a lie about a job that existed, and a silent hiding of data loss.
+        """
         path = self._path(job_id)
-        if not path.exists():
-            return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return None
+        except OSError as exc:
+            if not strict:
+                return None
+            raise JobError(
+                f"cannot read job {job_id!r}: {exc.strerror or exc} ({path})", kind="unreadable"
+            ) from exc
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            if not strict:
+                return None
+            raise JobError(
+                f"job {job_id!r} has an unreadable record ({exc.__class__.__name__} at {path})",
+                kind="corrupt",
+            ) from exc
         try:
             job = Job.from_dict(data)
-        except TypeError:
-            return None
+        except TypeError as exc:
+            if not strict:
+                return None
+            raise JobError(
+                f"job {job_id!r} has a record that is not a job ({exc})", kind="corrupt"
+            ) from exc
         if recover:
             job = self._recover_one(job)
         return job
@@ -627,7 +670,7 @@ class JobStore:
             job = self.get(job_id, recover=False)
             if job is None:
                 unlink_retry(claim_path)
-                raise JobError(f"no job {job_id!r}")
+                raise JobError(f"no job {job_id!r}", kind="missing")
             job.claim = payload
             job.pid = payload["pid"]
             job.heartbeat_at = time.time()
@@ -682,7 +725,7 @@ class JobStore:
     def request_cancel(self, job_id: str) -> Job:
         job = self.get(job_id)
         if job is None:
-            raise JobError(f"no job {job_id!r}")
+            raise JobError(f"no job {job_id!r}", kind="missing")
         if job.terminal:
             return job
         job.cancel_requested = True
@@ -702,7 +745,7 @@ class JobStore:
         """Re-queue a finished job as a *new attempt*, preserving the original request."""
         job = self.get(job_id)
         if job is None:
-            raise JobError(f"no job {job_id!r}")
+            raise JobError(f"no job {job_id!r}", kind="missing")
         if job.status not in (FAILED, INTERRUPTED, CANCELLED):
             raise JobError(
                 f"job {job_id} is {job.status}; only failed, interrupted or cancelled jobs can be retried"
@@ -745,7 +788,7 @@ class JobStore:
         """Rebuild the settings a job was submitted with, so a retry is identical."""
         job = self.get(job_id)
         if job is None:
-            raise JobError(f"no job {job_id!r}")
+            raise JobError(f"no job {job_id!r}", kind="missing")
         if not job.request:
             raise JobError(
                 f"job {job_id} was created before request snapshots existed; "
@@ -1087,9 +1130,10 @@ class JobRunner:
 
     # ------------------------------------------------------------------- read
     def status(self, job_id: str) -> Job:
-        job = self.store.get(job_id)
+        """The current state of one job, with the failure classified rather than flattened."""
+        job = self.store.get(job_id, strict=True)
         if job is None:
-            raise JobError(f"no job {job_id!r}")
+            raise JobError(f"no job {job_id!r}", kind="missing")
         return job
 
     def result(self, job_id: str) -> dict:
@@ -1120,42 +1164,52 @@ class JobRunner:
         return self.submit(job.source, settings, job.output or None)
 
     def wait(self, job_id: str, timeout: float | None = None) -> Job:
-        """Block until the job reaches a terminal state (for the CLI and for tests).
+        """Block until the job reaches a terminal state, respecting `timeout` exactly.
 
-        A poll loop must tolerate a *transient* miss. The registry record is written with
-        `os.replace`, and on Windows a concurrent reader can observe the moment between the
-        unlink and the rename, where the path does not resolve — a batch of jobs then failed
-        with "no job" while the job was running perfectly well. A genuine miss still raises as
-        soon as the deadline passes, so the error a caller sees is the same one as before; it
-        just is not raised on a hiccup.
+        The rules, and the reason for each:
+
+        * **The deadline is the caller's.** It is measured with `time.monotonic()` so a clock
+          adjustment cannot stretch or shorten it, and every sleep is clamped to what is left —
+          a fixed 250 ms nap must never overrun a 50 ms timeout.
+        * **A transient miss is not a missing job.** The registry record is written with
+          `os.replace`; a reader can observe the record absent (POSIX) or unreadable (a Windows
+          sharing violation) for a moment. `kind == "missing"` is retried while the deadline
+          allows, so a running job is never declared absent because of a hiccup.
+        * **Nothing else is retried.** A corrupt record, a permission error or any other
+          `JobError` propagates on the first read: hiding those behind a poll loop is how data
+          loss goes unnoticed.
+        * **A job that never appears keeps its precise error.** When the deadline passes without
+          a single successful read, the error is `no job '<id>'` — not a timeout message, which
+          would be misleading for a typo.
+        * **`timeout=0` still checks once.** The job may well exist and be finished; answering
+          "no job" without looking is the bug 0.9.1 fixes.
         """
-        deadline = time.time() + (timeout if timeout is not None else 24 * 3600)
-        misses = 0
+        budget = 24 * 3600 if timeout is None else max(0.0, float(timeout))
+        deadline = time.monotonic() + budget
+        interval = 0.25
         seen = False
-        while time.time() < deadline:
+
+        while True:
             try:
                 job = self.status(job_id)
             except JobError as exc:
-                if "no job" not in str(exc):
-                    raise
-                misses += 1
-                if misses == 1:
-                    # First miss: give the writer a moment before deciding anything.
-                    time.sleep(0.1)
-                    continue
-                if misses > 40:  # ~10 s of consecutive misses is a real absence
-                    raise
-                time.sleep(0.25)
+                if exc.kind != "missing":
+                    raise  # corrupt, unreadable, or a real job error: never hidden
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    if not seen:
+                        raise JobError(f"no job {job_id!r}", kind="missing") from exc
+                    raise JobError(f"job {job_id} did not finish within {budget}s") from exc
+                # A short first pause: the window is a rename, not a rebuild.
+                time.sleep(min(0.1 if not seen else interval, remaining))
                 continue
-            misses = 0
             seen = True
             if job.terminal:
                 return job
-            time.sleep(0.25)
-        if not seen:
-            # Never once resolved: the precise error a caller expects, not a timeout message.
-            raise JobError(f"no job {job_id!r}")
-        raise JobError(f"job {job_id} did not finish within {timeout}s")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise JobError(f"job {job_id} did not finish within {budget}s")
+            time.sleep(min(interval, remaining))
 
     def shutdown(self, wait: bool = True, timeout: float = 30.0) -> None:
         """Stop accepting work, stop the heartbeats, mark anything running as interrupted."""

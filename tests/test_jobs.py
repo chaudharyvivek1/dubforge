@@ -355,7 +355,10 @@ def test_wait_survives_a_transient_registry_miss(tmp_path, monkeypatch):
     def flaky(self, job_id):
         calls["n"] += 1
         if calls["n"] <= 2:
-            raise JobError(f"no job {job_id!r}")  # the transient window
+            # `kind="missing"` is what the real `status()` raises for an absent record. Since
+            # 0.9.1 an *unclassified* JobError is deliberately not retried, so a double that
+            # omits the kind would be simulating a different error than the one it claims to.
+            raise JobError(f"no job {job_id!r}", kind="missing")
         return real_status(self, job_id)
 
     monkeypatch.setattr(JobRunner, "status", flaky)

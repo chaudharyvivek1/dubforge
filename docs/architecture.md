@@ -358,6 +358,35 @@ change does not. `REQUEST_FIELDS` covers what changes the artifact — including
 `lipsync` and `separator` — and deliberately excludes limits, logging and local paths. A
 supplied transcript enters the identity as a hash of its bytes, never as a path.
 
+## Polling a job: the deadline and the classification (0.9.1)
+
+`JobRunner.wait(job_id, timeout)` is the only blocking call in the job API, so it has to be
+exact about two things.
+
+**The deadline is the caller's.** It is measured with `time.monotonic()`, every sleep is clamped
+to the remaining budget, and no retry can extend it. `timeout=0` performs one check: a finished
+job is returned, a running one raises the timeout error.
+
+**"No job" means no job.** `JobStore.get()` has always returned `None` when it could not produce a
+job — absent, unreadable, corrupt — and callers flattened all three into `no job '<id>'`. Since
+0.9.1 the failure is classified:
+
+| situation | `JobError.kind` | what `wait()` does |
+|---|---|---|
+| the record is absent | `missing` | retries while the deadline allows; if it never appears, raises `no job '<id>'` |
+| the record cannot be read (permissions, a Windows sharing violation mid-`os.replace`) | `unreadable` | raises at once — retrying a file you cannot open hides a real problem |
+| the record is not a job (bad JSON, wrong shape) | `corrupt` | raises at once; never retried |
+| anything else (illegal transition, lost claim) | `job` | raises at once |
+| any other exception | — | propagates untouched |
+
+`get()` keeps its lenient default (`None` for all of the above) because most callers want "the
+job or nothing"; `get(..., strict=True)` is the classifying form, and `status()` uses it.
+
+The stress test in `tests/test_wait_deadline.py` replaces the record 200 times while a reader
+reads it and asserts no read ever sees a half-written file: `os.replace` is atomic on POSIX, and
+the 0.9.0 Windows failure was a sharing violation, not a missing-file window. No lock was added,
+because the evidence did not ask for one.
+
 ## Lock liveness, by platform
 
 A lock is stale when its **owner is gone**. On POSIX that is a dead pid (`os.kill(pid, 0)`),

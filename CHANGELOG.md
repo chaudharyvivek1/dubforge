@@ -2,6 +2,54 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.9.1] — 2026-11-18
+
+Polling reliability, timeout correctness and error classification. 0.9.0's retry treated the
+symptom of a Windows race; the cause was that three different failures all looked like "no job".
+
+### Fixed — a timeout that was not the caller's
+
+* `wait()` measured its deadline with `time.time()` and slept in fixed 100/250 ms steps, so a
+  50 ms timeout could overrun and a 1 s timeout could nap past its own deadline. It now uses
+  `time.monotonic()` and clamps every sleep to the remaining budget.
+* **`timeout=0` reported an existing job as missing.** A finished job is now returned; a running
+  one raises the timeout error, which is what the caller asked about.
+
+### Fixed — three failures wearing one mask
+
+`JobStore.get()` returned `None` for a missing record, an *unreadable* one and a *corrupt* one,
+and the poll loop turned all three into `no job '<id>'`. That was two lies: a job that existed
+was reported absent, and a corrupt record was retried as if it might heal.
+
+* `JobError` gained a `kind` — `missing`, `unreadable`, `corrupt`, `job` (default, so existing
+  callers are unaffected) — with the message unchanged for every existing case.
+* `JobStore.get(..., strict=True)` classifies instead of hiding; `JobRunner.status()` uses it.
+  The lenient default is kept for the callers that only want "the job or nothing".
+* `wait()` retries **only** `kind == "missing"`, and only while the deadline allows. A corrupt
+  record, a permission error or any other `JobError` propagates on the first read. Unexpected
+  exceptions always propagated and still do.
+* The transient-miss budget is now the deadline, not a fixed 40-attempt counter, so retries can
+  never extend a caller's wait.
+* Every `no job` raise in the module is classified — five sites, not just the polling path.
+
+### Investigated, not changed — is `os.replace` racy?
+
+A stress test (a writer replacing the record 200 times while a reader reads) never observed a
+half-written record on Linux: `os.replace` is atomic on POSIX, and the temp file plus rename in
+`save()` is the right pattern. The Windows failure in 0.9.0 was therefore almost certainly a
+*sharing violation* (an `OSError`, previously flattened to `None`) rather than a missing-file
+window. No lock was added, because the evidence does not support one — what was missing was the
+classification that lets the poll loop tell "absent for a moment" from "unreadable, ever".
+
+### Tests
+
+647 → 666. New `tests/test_wait_deadline.py` (19) covering the brief's A–H cases: deadline
+respected for a nonexistent job (with elapsed time measured on a monotonic clock), very short
+timeouts, `timeout=0`, transient-miss recovery, persistent misses under a timeout, a deadline that
+is not reset by retries, completion/failure/cancellation during polling, corrupt and unreadable
+records propagating immediately, unexpected errors propagating, `JobError` keeping its old shape,
+and a concurrent-writer stress test for registry atomicity.
+
 ## [0.9.0] — 2026-11-18
 
 The ledger becomes authoritative. 0.8.0 wrote `docs/verification.json`; nothing read it. Now the

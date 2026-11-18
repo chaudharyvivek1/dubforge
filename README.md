@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-647%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-666%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-27%20tools-6f42c1)](src/dubforge/server.py)
@@ -440,6 +440,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
 | [docs/verification.md](docs/verification.md) | the live-verification procedure, how the flag is derived, what a green row does not mean |
+| [docs/release-0.9.1.md](docs/release-0.9.1.md) | the 0.9.1 checklist: polling deadlines, error classification, registry atomicity |
 | [docs/release-0.9.0.md](docs/release-0.9.0.md) | the 0.9.0 checklist: expiry, local vs network, contradictions |
 | [docs/release-0.8.0.md](docs/release-0.8.0.md) | the 0.8.0 checklist: the verification ledger, plan/run/import |
 | [docs/release-0.7.0.md](docs/release-0.7.0.md) | the 0.7.0 checklist: the cost model, extraction and placement caches |
