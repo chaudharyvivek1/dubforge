@@ -258,7 +258,11 @@ def test_a_corrupt_cached_render_is_regenerated(clip, tmp_path):
     settings = _settings(tmp_path)
     first = pipeline.dub(clip, settings, output=tmp_path / "a.mp4")
     store = SegmentStore(Path(first.workdir) / "segments")
-    victims = sorted(store.dir().glob("*.wav"))
+    # The raw renders only: since 0.7.0 the directory also holds `<seg>.placed.wav`, the
+    # post-stretch artifact, and corrupting that one is a different (also correct) case.
+    victims = sorted(
+        path for path in store.dir().glob("*.wav") if not path.name.endswith(".placed.wav")
+    )
     assert victims
     victims[0].write_bytes(b"")
 

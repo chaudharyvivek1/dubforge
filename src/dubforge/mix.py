@@ -75,6 +75,17 @@ def mix_key(
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:20]
 
 
+def extract_key(source_hash: str, *, rate: int, channels: int) -> str:
+    """The decoded audio a stage needs, identified by content and format.
+
+    Extraction is a decode pass over the whole film, and a regeneration needs the same two
+    files the first run made (16 kHz mono for recognition, 48 kHz stereo for the bed). Keying
+    them on the source's content hash makes that pass free the second time.
+    """
+    payload = {"source": source_hash, "rate": int(rate), "channels": int(channels)}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+
+
 def mux_key(mixed: str | Path, source: str | Path, *, audio_bitrate: str, has_video: bool) -> str:
     """Everything that determines the container, and nothing else."""
     payload = {

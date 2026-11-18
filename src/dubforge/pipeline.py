@@ -126,6 +126,8 @@ class DubResult:
     spliced_lines: int = 0
     mix_mode: str = "rebuilt"
     mux_mode: str = "rebuilt"
+    extract_mode: str = "rebuilt"
+    placed_reused: int = 0
     transcript_json: str = ""
     subtitles: dict = field(default_factory=dict)
     qc: dict = field(default_factory=dict)
@@ -157,6 +159,8 @@ class DubResult:
             "spliced_lines": self.spliced_lines,
             "mix_mode": self.mix_mode,
             "mux_mode": self.mux_mode,
+            "extract_mode": self.extract_mode,
+            "placed_reused": self.placed_reused,
             "subtitles": self.subtitles,
             "qc": self.qc,
             "plan": self.plan,
@@ -448,6 +452,8 @@ def _validate_output(path: Path, source_info) -> None:
 def _rebuilt_stages(result: DubResult) -> list[str]:
     """Which stages actually ran again, from the run's own step log."""
     stages: list[str] = []
+    if result.extract_mode != "reused":
+        stages.append("extraction")
     if result.dialogue_mode == "assembled":
         stages.append("dialogue track")
     if result.mix_mode != "reused":
@@ -657,6 +663,8 @@ def _write_review(
             "spliced_lines": result.spliced_lines,
             "mix_mode": result.mix_mode,
             "mux_mode": result.mux_mode,
+            "extract_mode": result.extract_mode,
+            "placed_reused": result.placed_reused,
             # Derived from what actually ran, not from a fixed list: 0.4.0 hardcoded this and
             # was wrong the moment a stage learned to reuse.
             "rebuilt_stages": _rebuilt_stages(result),
@@ -871,13 +879,41 @@ def dub(
         raise DubError(f"{what}: no provider in the chain could run")  # pragma: no cover
 
     # 1 — decode ---------------------------------------------------------------
+    #
+    # Two decode passes over the whole film, and a regeneration needs exactly the same two
+    # files. Keyed on the source's content hash and the format, so the second run is free.
+    audio_cache = (
+        mix.StageCache(Path(settings.workdir) / "cache" / "audio", ".wav")
+        if settings.stage_cache
+        else None
+    )
+
+    extracted_reused = 0
+
+    def _decode(rate: int, channels: int, destination: Path, label: str) -> str:
+        nonlocal extracted_reused
+        key = mix.extract_key(fingerprint, rate=rate, channels=channels)
+        if audio_cache is not None:
+            cached = audio_cache.find(key)
+            if cached is not None:
+                extracted_reused += 1
+                return audio_cache.restore(cached, destination)
+        path = ffmpeg.extract_audio(source, destination, rate, channels)
+        if audio_cache is not None:
+            with contextlib.suppress(OSError):
+                audio_cache.save(key, path, {"rate": rate, "channels": channels, "why": label})
+        return path
+
     asr_audio = step(
         "extract audio (16 kHz mono)",
-        lambda: (ffmpeg.extract_audio(source, work / "source16.wav", 16000, 1), "asr input"),
+        lambda: (_decode(16000, 1, work / "source16.wav", "asr input"), "asr input"),
     )
     full_audio = step(
         "extract audio (48 kHz stereo)",
-        lambda: (ffmpeg.extract_audio(source, work / "source48.wav", 48000, 2), "bed source"),
+        lambda: (_decode(48000, 2, work / "source48.wav", "bed source"), "bed source"),
+    )
+    result.extract_mode = (
+        "reused" if extracted_reused >= 2 else ("partial" if extracted_reused else "rebuilt")
     )
 
     # 2 — bed ------------------------------------------------------------------
@@ -1141,26 +1177,51 @@ def dub(
     store = segment_store.SegmentStore(work / "segments") if settings.segment_reuse else None
     reused_lines = 0
     rendered_lines = 0
+    placed_reused = 0
 
-    def _place(seg) -> None:
+    def _desired_speed(seg) -> float:
+        """The atempo factor this line needs to fit its window (1.0 if it already fits)."""
+        window = seg.window or seg.duration
+        if seg.raw_duration and window > 0.1 and seg.raw_duration > window * 1.02:
+            return round(min(seg.raw_duration / window, settings.max_speed), 3)
+        return 1.0
+
+    def _place(seg, speed: float | None = None) -> None:
         """Stretch a line into its window and queue it for the mix.
 
-        The stretch depends on the window, which changes when a neighbour changes, so it is
-        redone every run — it costs milliseconds, unlike the synthesis it follows.
+        The stretch depends on the window, which changes when a neighbour changes — so it is
+        keyed on the speed actually applied. A re-run whose windows are unchanged reuses the
+        stretched render instead of invoking ffmpeg 300 times.
         """
-        window = seg.window or seg.duration
-        speed = 1.0
-        if seg.raw_duration and window > 0.1 and seg.raw_duration > window * 1.02:
-            speed = min(seg.raw_duration / window, settings.max_speed)
+        if speed is None:
+            speed = _desired_speed(seg)
+        nonlocal placed_reused
+        if speed > 1.0 and store is not None and not seg.regenerated:
+            placed = store.find_placed(seg.seg_id, speed)
+            if placed is not None:
+                placed_path, placed_duration = placed
+                shutil.copyfile(placed_path, seg.audio_path)
+                seg.speed = speed
+                # Measured when the artifact was made; probing again would be a subprocess
+                # per line, which is most of what a no-op regeneration used to cost.
+                seg.rendered_duration = placed_duration or ffmpeg.duration_of(seg.audio_path)
+                placed_reused += 1
+                clips.append((seg.audio_path, seg.start))
+                return
+        applied = 1.0
+        if speed > 1.0:
             try:
                 ffmpeg.stretch(seg.audio_path, seg.audio_path, speed)
+                applied = speed
             except ffmpeg.FFmpegError as exc:
                 result.warnings.append(
                     f"line {seg.index}: could not stretch ({exc}); left at original speed"
                 )
-                speed = 1.0
-        seg.speed = round(speed, 3)
+        seg.speed = round(applied, 3)
         seg.rendered_duration = ffmpeg.duration_of(seg.audio_path)
+        if store is not None:
+            with contextlib.suppress(OSError):
+                store.save_placed(seg.seg_id, seg.audio_path, applied, seg.rendered_duration)
         clips.append((seg.audio_path, seg.start))
 
     for seg in segments:
@@ -1192,7 +1253,7 @@ def dub(
                 seg.render_fingerprint = want
                 seg.regenerated = False
                 reused_lines += 1
-                _place(seg)
+                _place(seg, _desired_speed(seg))
                 continue
             if store is not None and not owned:
                 # Somebody else is rendering this line and we could not wait for them. Render
@@ -1285,6 +1346,7 @@ def dub(
     )
     result.reused_segments = reused_lines
     result.rendered_segments = rendered_lines
+    result.placed_reused = placed_reused
     if not clips:
         raise DubError(
             "no line could be synthesised. First error:\n  "

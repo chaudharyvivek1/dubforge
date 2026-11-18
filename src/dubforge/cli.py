@@ -18,6 +18,7 @@ from . import (
     capabilities,
     demo,
     doctor,
+    explain,
     ffmpeg,
     limits,
     pipeline,
@@ -484,6 +485,21 @@ def cmd_review(args) -> int:
     return EXIT_ERROR
 
 
+def cmd_explain(args) -> int:
+    """Print what a finished job actually cost, stage by stage."""
+    settings = _settings(args)
+    try:
+        story = explain.explain(args.job_id, settings)
+    except (explain.ExplainError, JobError) as exc:
+        print(f"dubforge: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    if args.json:
+        _emit_json(story)
+    else:
+        print(explain.render(story))
+    return EXIT_OK
+
+
 def cmd_cache(args) -> int:
     """Inspect and clean the content caches (stems, and the segment stores' size)."""
     settings = _settings(args)
@@ -653,6 +669,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes", action="store_true", help="cleanup: actually delete (default is a dry run)"
     )
     p.set_defaults(func=cmd_jobs)
+
+    p = sub.add_parser("explain", help="show what a finished job actually cost, stage by stage")
+    common(p)
+    p.add_argument("job_id", help="the job to explain")
+    p.set_defaults(func=cmd_explain)
 
     p = sub.add_parser("review", help="export, validate or apply a human review file")
     common(p)

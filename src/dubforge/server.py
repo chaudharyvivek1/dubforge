@@ -29,7 +29,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import __version__, capabilities, doctor, ffmpeg, limits, pipeline, qc, review, srt
+from . import (
+    __version__,
+    capabilities,
+    doctor,
+    explain,
+    ffmpeg,
+    limits,
+    pipeline,
+    qc,
+    review,
+    srt,
+)
 from .config import ConfigError, Settings, is_language_code
 from .jobs import JobError, JobRunner, JobStore
 from .media import Transcript
@@ -894,6 +905,14 @@ def build_server():
             warnings=result.warnings[:10],
             note="a new file was written; the previous output is untouched",
         )
+
+    @mcp.tool()
+    @guard
+    def dubforge_explain_job(job_id: str) -> str:
+        """Explain what a finished job actually cost: which stages were reused, which were
+        rebuilt, and where the time went. Reads the job's review.json."""
+        story = explain.explain(job_id, _settings())
+        return _ok(**story)
 
     @mcp.tool()
     @guard

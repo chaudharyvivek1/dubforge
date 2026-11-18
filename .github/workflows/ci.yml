@@ -82,6 +82,7 @@ jobs:
                       "dubforge_cleanup_jobs", "dubforge_get_capabilities",
                       "dubforge_validate_config", "dubforge_check_provider_health",
                       "dubforge_estimate_cost", "dubforge_regenerate_segments",
+                      "dubforge_explain_job",
                       "dubforge_export_review", "dubforge_validate_review",
                       "dubforge_apply_review"}
 
@@ -172,6 +173,7 @@ jobs:
                       "dubforge_cleanup_jobs", "dubforge_get_capabilities",
                       "dubforge_validate_config", "dubforge_check_provider_health",
                       "dubforge_estimate_cost", "dubforge_regenerate_segments",
+                      "dubforge_explain_job",
                       "dubforge_export_review", "dubforge_validate_review",
                       "dubforge_apply_review"}
 

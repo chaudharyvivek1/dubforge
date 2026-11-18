@@ -133,6 +133,10 @@ class SegmentStore:
     def meta_path(self, seg_id: str) -> Path:
         return self.dir() / f"{seg_id}.json"
 
+    def placed_path(self, seg_id: str) -> Path:
+        """The render *after* the window-specific stretch, when it is still valid."""
+        return self.dir() / f"{seg_id}.placed.wav"
+
     # ------------------------------------------------------------------ lookup
     def find(self, seg_id: str, expected: str) -> RenderRecord | None:
         """The record for this segment *if* its fingerprint matches and the audio is intact."""
@@ -254,8 +258,61 @@ class SegmentStore:
         record.audio = str(audio_target)
         return record
 
+    def save_placed(
+        self, seg_id: str, audio: str | Path, speed: float, duration: float | None = None
+    ) -> None:
+        """Remember the stretched render so a re-run with the same window skips atempo.
+
+        The stretch is cheap per line but not free, and on a 300-line regeneration it is 300
+        ffmpeg invocations. It is keyed on the speed actually applied, because a different
+        window means a different stretch.
+        """
+        target = self.placed_path(seg_id)
+        temp = target.with_suffix(".wav.tmp")
+        temp.write_bytes(Path(audio).read_bytes())
+        os.replace(temp, target)
+        record = self._read(seg_id)
+        if record is None:
+            return
+        record.meta = {
+            **record.meta,
+            "speed": round(float(speed), 3),
+            "placed_sha256": sha256_file(target),
+            "placed_duration": round(float(duration), 3) if duration else 0.0,
+        }
+        temp_meta = self.meta_path(seg_id).with_suffix(".json.tmp")
+        temp_meta.write_text(json.dumps(record.to_dict(), indent=2), encoding="utf-8")
+        os.replace(temp_meta, self.meta_path(seg_id))
+
+    def find_placed(self, seg_id: str, speed: float) -> tuple[str, float] | None:
+        """The stretched render and its measured duration, if the speed still matches."""
+        record = self._read(seg_id)
+        if record is None:
+            return None
+        stored = record.meta.get("speed")
+        if stored is None or abs(float(stored) - round(float(speed), 3)) > 1e-6:
+            return None
+        placed = self.placed_path(seg_id)
+        if not placed.exists():
+            return None
+        try:
+            if sha256_file(placed) != record.meta.get("placed_sha256"):
+                return None
+        except OSError:
+            return None
+        # The duration is stored with the artifact, so reusing it costs no ffprobe call.
+        return str(placed), float(record.meta.get("placed_duration") or 0.0)
+
+    def _read(self, seg_id: str) -> RenderRecord | None:
+        try:
+            return RenderRecord.from_dict(
+                json.loads(self.meta_path(seg_id).read_text(encoding="utf-8"))
+            )
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return None
+
     def forget(self, seg_id: str) -> None:
-        for path in (self.audio_path(seg_id), self.meta_path(seg_id)):
+        for path in (self.audio_path(seg_id), self.meta_path(seg_id), self.placed_path(seg_id)):
             with contextlib.suppress(OSError):
                 path.unlink()
 

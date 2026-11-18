@@ -2,6 +2,72 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.7.0] — 2026-11-18
+
+The last two passes, and a command that explains the bill. A regeneration that changes nothing
+now reuses every stage: 6.2 s → 2.3 s on the demo, byte-identical output.
+
+### Added — the decoded audio is cached (P1)
+
+* `mix.extract_key()` + the stage cache: the two decode passes (16 kHz mono for recognition,
+  48 kHz stereo for the bed) are keyed on the source's content hash and the format, so a
+  re-run copies them instead of decoding the film again.
+* `extract_mode` reports `reused` / `partial` / `rebuilt` per run, and `rebuilt_stages` gained
+  `extraction` when it ran.
+
+### Added — the stretched render is cached (P1)
+
+* The segment store now keeps the render *after* its window-specific atempo stretch
+  (`<seg_id>.placed.wav`), keyed on the speed actually applied and checksummed like the raw
+  render. A re-run whose windows are unchanged skips one ffmpeg invocation **per line** —
+  on a 300-line film, 300 processes.
+* The measured duration is stored with the artifact, so reusing it costs no `ffprobe` call
+  either. `placed_reused` reports how many lines came from it.
+
+### Added — `dubforge explain` (P1)
+
+* `explain.py`, `dubforge explain <job-id>`, and the MCP tool `dubforge_explain_job` (26
+  tools). It reads `review.json` and prints: which stages were reused, which were rebuilt,
+  where the time went (per stage, with shares), the QC failures, and what one more edited line
+  would cost.
+* It refuses to invent numbers: a job with no `review.json` gets an explanation of why, not a
+  table of zeroes. The "if you edit one more line" table lives in code (`explain.NEXT_EDIT`)
+  so the command and the documentation cannot drift.
+
+### Decided against — per-region loudness and a spliced mix
+
+The 0.6.0 note proposed reusing the mix outside edited windows. Measured before building it:
+the mix stage is two passes over the audio, and a mix splice would need a loudness measurement
+pass plus a splice pass — so it saves at most one pass while adding a global-gain correctness
+problem (the gain is a function of the whole track). Extraction and placement, by contrast,
+were two full decodes and one process per line. The cheaper thing to fix was the expensive
+thing, so that is what shipped. The reasoning is in `docs/architecture.md` under "What a
+stage costs", with the numbers that decided it.
+
+### Tests
+
+593 → 608. New `tests/test_explain_and_caches.py` (14): extraction key coverage, a second run
+that must not call `extract_audio`, a corrupted extract, a changed source, placed-render reuse
+with a counted `stretch`, invalidation when the window changes, the stored duration, and
+`explain` against a finished job, a no-op job, a job without a review, and an unknown job.
+
+### Benchmark (`--regen`, small clip, stub providers)
+
+| case | TTS | separations | reused renders | bed | dialogue | mix | mux | wall |
+|---|---|---|---|---|---|---|---|---|
+| full run | 3 | 1 | 0 | 0 | assembled | rebuilt | rebuilt | 6.2 s |
+| regen, 0 edited | 0 | 0 | 3 | 1 | reused | reused | reused | 2.3 s |
+| regen, 1 edited | 1 | 0 | 2 | 1 | spliced | rebuilt | rebuilt | 4.3 s |
+
+### Known limitations
+
+* A spliced dialogue still rebuilds the mix, and the analysis above says that is the right
+  trade at this stage size.
+* Word-level alignment remains provider-dependent and unverified live; calibration has no
+  measured samples.
+* The wall clock of a no-op run is now dominated by process startup and bookkeeping rather
+  than by media work, which is a good place to be but not zero.
+
 ## [0.6.0] — 2026-11-18
 
 Stage-level reuse and honest timing. A regeneration now reuses every stage whose inputs are

@@ -156,6 +156,9 @@ dubforge_apply_review review_path="review.json"      → {"applied": 5, "rendere
 * Read `work.dialogue_mode`, `work.mix_mode`, `work.mux_mode`, `work.rebuilt_stages` and
   `work.slowest_stage` before describing what a run cost. Never say "only five lines were
   processed" when the mix was rebuilt.
+* `dubforge explain <job-id>` (MCP: `dubforge_explain_job`) prints that story for the user:
+  stages reused, stages rebuilt, seconds per stage, and what one more edit would cost. Prefer
+  quoting it over estimating.
 * When a changed line overlaps another line, the splice is refused and the track is assembled
   from scratch; `review.json` then says `work.dialogue_mode: "assembled"`. Report what it says.
 * Applying the same file twice is a no-op.

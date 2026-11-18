@@ -2,7 +2,7 @@
 
 # MCP tool reference
 
-All 25 tools, generated from the running server: names, descriptions and
+All 26 tools, generated from the running server: names, descriptions and
 input schemas are read from the code, so this page is the schema.
 
 ## Response envelope
@@ -29,6 +29,7 @@ an envelope, never an exception the transport has to render.
 | [`dubforge_cleanup_jobs`](#dubforge_cleanup_jobs) | Delete finished job records (and their work directories). Dry run by default. |
 | [`dubforge_doctor`](#dubforge_doctor) | Report ffmpeg, optional packages, API keys (set/not set) and which provider each stage would use. |
 | [`dubforge_estimate_cost`](#dubforge_estimate_cost) | What a dub would cost at list prices, and whether your limits allow it. Spends nothing. |
+| [`dubforge_explain_job`](#dubforge_explain_job) | Explain what a finished job actually cost: which stages were reused, which were |
 | [`dubforge_export_review`](#dubforge_export_review) | Export a review file for a finished job: one editable row per line. |
 | [`dubforge_get_capabilities`](#dubforge_get_capabilities) | What this install can actually do: stages, providers, features, formats, limits. |
 | [`dubforge_get_job_result`](#dubforge_get_job_result) | Output paths, QC verdict and the providers that actually ran, once a job finished. |
@@ -141,6 +142,16 @@ What a dub would cost at list prices, and whether your limits allow it. Spends n
 | `asr` | no | string | `''` |
 | `translator` | no | string | `''` |
 | `tts` | no | string | `''` |
+
+
+## `dubforge_explain_job`
+
+Explain what a finished job actually cost: which stages were reused, which were
+rebuilt, and where the time went. Reads the job's review.json.
+
+| Parameter | Required | Type | Default / allowed |
+| --- | --- | --- | --- |
+| `job_id` | yes | string | — |
 
 
 ## `dubforge_export_review`

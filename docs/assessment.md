@@ -5,7 +5,7 @@ report, then implement in separate reviewed changes. **Every row below states th
 shipped in, or that it is still missing.** Where a feature is partial, it says exactly how
 far it goes.
 
-Current release: **0.6.0**. Everything in "implemented" is tested; everything else is
+Current release: **0.7.0**. Everything in "implemented" is tested; everything else is
 not, and is not advertised anywhere.
 
 ---
@@ -99,7 +99,8 @@ next phase closes (see §5).
 | Audio | per-segment regeneration | **done (0.3.0)** | `segments.py` + `dubforge regen`; reuse is per line, the mix is rebuilt |
 | Audio | partial remixing (splice changed lines into the previous dialogue track) | **done (0.5.0)** | one pass; refused when a changed line overlaps another |
 | Audio | reuse of the whole mix and mux when nothing changed | **done (0.6.0)** | content-addressed keys; a no-op run is byte-identical and ~2× faster on the demo |
-| Audio | per-region loudness so a splice can reuse the mix outside the edited windows | **missing** | the gain is global today, so a splice rebuilds the mix |
+| Audio | per-region loudness so a splice can reuse the mix outside the edited windows | **decided against (0.7.0)** | measured: it saves at most one pass and moves a global gain to a local one; see `docs/architecture.md` |
+| Ops | explain a finished job's cost | **done (0.7.0)** | `dubforge explain`, reading `review.json` |
 | Audio | silence trimming, pitch control | **missing** | atempo only, pitch preserved by design |
 | Subtitles | line-length limits, reading-speed (CPS) validation | **done (0.2.1)** | `subtitle_readability` warns on both; the text is still whatever the translation is |
 | Subtitles | translation memory | **missing** | the glossary is the closest thing today |

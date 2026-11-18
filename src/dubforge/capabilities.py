@@ -107,6 +107,7 @@ def snapshot(settings: Settings | None = None) -> dict:
         "stem_cache": settings.stem_cache,
         "dialogue_reuse": settings.dialogue_cache,
         "stage_cache": settings.stage_cache,
+        "explain_job": True,  # dubforge explain / dubforge_explain_job read review.json
         # A stage is reused only when every input that determines it is unchanged; these are
         # the ones that always run because their input always changes (a new output file, and
         # QC on it).

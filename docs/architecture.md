@@ -210,6 +210,8 @@ table:
 | loudness normalisation | **yes**, if the dialogue and mix settings are unchanged | it is a global gain, so its key includes the dialogue's hash |
 | ducking + mix | **yes**, under the same key | the envelope follows the dialogue; if the dialogue's bytes changed, the mix is rebuilt |
 | mux | **yes**, if the mix, source and bitrate are unchanged | content-addressed, so a re-run copies a validated file instead of encoding |
+| decoded audio | **yes**, keyed on source content + rate + channels (0.7.0) | two decode passes over the film |
+| stretched render | **yes**, keyed on the raw render + the speed applied (0.7.0) | one ffmpeg process per line |
 | QC and the report | no | they are the record of the run |
 
 `review.json` carries this as data: `work.reused_renders`, `work.rendered_segments`,
@@ -262,6 +264,37 @@ saving that remains is the TTS calls and the assembly.
 That asymmetry is deliberate and tested: `test_a_spliced_dialogue_always_rebuilds_the_mix`
 fails if someone "optimises" it later.
 
+## What a stage costs, and why this release fixed extraction instead of the mix (0.7.0)
+
+Measured on the 9-second demo, one full run, per stage:
+
+| stage | seconds | what makes it rerun |
+|---|---|---|
+| extract 16 kHz mono | 0.14 | always, before 0.7.0 — now keyed on source content + format |
+| extract 48 kHz stereo | 0.19 | same |
+| separate stems | 0.21 | source or separator changed |
+| transcribe | 0.21 | source content changed |
+| synthesise | 1.03 | text, voice, provider, model, language, style, emotion, rate |
+| stretch to window | ~0.1 per line | the window, i.e. a neighbour's timing |
+| assemble dialogue track | 0.21 | more than one line changed, or an overlap |
+| normalise loudness | 0.79 | the dialogue's bytes |
+| mix with bed | 0.30 | the dialogue's bytes, or the mix settings |
+| mux | 0.75 | the mix's bytes, or the bitrate |
+
+The 0.6.0 note proposed reusing the mix outside edited windows (per-region loudness). Measured
+first, that idea is weak: the mix is two passes (0.79 + 0.30), and doing it per region needs a
+loudness measurement pass plus a splice pass, so it saves at most one pass — while introducing
+a correctness problem, because the loudness gain is a function of the whole track.
+
+Extraction, by contrast, was **two full decodes of the film** (0.33 s here, minutes on a real
+one) and the stretch was **one process per line** (300 processes on a 300-line film). Those
+were both free to fix and both scale with the film. So 0.7.0 cached extraction and placement,
+and left the mix rebuild alone on purpose.
+
+The general rule this encodes: **optimise the stages that scale with the film, not the ones
+that scale with the edit.** A regeneration's cost is (fixed work) + (per-line work) + (per-minute
+work); the third is the one that hurts.
+
 ## Reading a run's cost (0.6.0)
 
 `review.json` → `work`:
@@ -281,6 +314,33 @@ fails if someone "optimises" it later.
 
 `rebuilt_stages` is derived from the modes, not hardcoded — a hardcoded list is how 0.4.0
 ended up claiming a stage it had not run.
+
+## Explaining a run (0.7.0)
+
+`dubforge explain <job-id>` reads `review.json` and answers the only question a user has after
+a regeneration: *what did that cost, and what would one more edit cost?*
+
+```
+$ dubforge explain lecture-a1b2c3d4
+job lecture-a1b2c3d4  (completed, QC failed)
+  lines     3  (3 reused, 0 rendered, 1 placed from cache)
+
+  what ran
+    extracted audio   reused
+    separated bed     reused
+    dialogue track    reused
+    mix               reused
+    mux               reused
+    rebuilt           nothing — every stage was reused
+
+  where the time went
+      0.38s    86%  synthesise
+      0.20s    45%  transcribe
+```
+
+The "if you edit one more line" table is `explain.NEXT_EDIT` in code, so the command and this
+page cannot disagree. The command never prints a number it did not read: a job without a
+`review.json` gets the reason, not a table of zeroes.
 
 ## Publishing an output (0.4.0)
 

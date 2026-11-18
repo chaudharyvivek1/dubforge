@@ -5,7 +5,7 @@ dependency and licence assessment, security risk assessment, and the phased plan
 sizes — is in [docs/assessment.md](docs/assessment.md). Ordered by what most improves a real dub, not by
 what is most fun to build.
 
-## Now — the honest state of 0.6.0
+## Now — the honest state of 0.7.0
 
 * The pipeline is complete and the offline path is fully tested (the suite is the source of
   truth for its own size — `python -m pytest --collect-only -q | tail -1` — real ffmpeg, a
@@ -31,6 +31,9 @@ what is most fun to build.
 * **0.6.0** cached the mix and the mux against their real inputs, so a run with no changes
   reuses every stage and writes a byte-identical file; `review.json` now reports per-stage
   seconds and which stages actually ran.
+* **0.7.0** cached the decoded audio and the stretched renders — the two stages that scale with
+  the film — and added `dubforge explain`, which prints where a job's time actually went and
+  what one more edit would cost.
 
 ## Next
 

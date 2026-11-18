@@ -3,10 +3,10 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-593%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-608%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-25%20tools-6f42c1)](src/dubforge/server.py)
+[![MCP](https://img.shields.io/badge/MCP-26%20tools-6f42c1)](src/dubforge/server.py)
 [![demo offline](https://img.shields.io/badge/demo-no%20key%2C%20no%20network-orange)](#try-it-in-one-command)
 
 **Dub any video into any language — with several AI providers in one pipeline that
@@ -171,7 +171,7 @@ makes the smallest real request each vendor allows, records the date and API ver
 `docs/verification.json`, and a test fails if an adapter claims `verified` without an `ok`
 row there. Nothing is marked verified until someone has actually spent a rupee on it.
 
-Twenty-five tools, and the intended order is in the server's instructions:
+Twenty-six tools, and the intended order is in the server's instructions:
 `dubforge_doctor` → `plan_dub` → `dub_video` (or `dubforge_submit_job` for anything long)
 → read `qc`. Transcripts come back as
 a path and a five-line preview, never as a wall of text.
@@ -261,12 +261,14 @@ beside `review.json` — no server, no remote assets.
 | separated background bed | yes, when the source and separator match |
 | transcription | yes |
 | TTS renders of unchanged lines | yes, by fingerprint |
+| decoded audio | **yes** — keyed on the source's content hash and the format |
+| stretched render | **yes**, keyed on the render and the speed applied — one ffmpeg process per line saved |
 | dialogue track | **spliced** — only the changed lines' own ranges are replaced, in one pass |
 | normalisation, ducking, mix | **yes, if the dialogue's bytes did not change** — a splice rebuilds them, because the loudness gain is global |
 | mux | **yes, if the mix, source and bitrate are unchanged** |
 
 A run with nothing changed reuses every stage and writes a byte-identical file: on the
-9-second demo, 6.6 s became 2.9 s. `review.json` reports `work.dialogue_mode`, `mix_mode`,
+9-second demo, 6.2 s became 2.3 s. `review.json` reports `work.dialogue_mode`, `mix_mode`,
 `mux_mode`, `rebuilt_stages` and per-stage seconds, so you can see exactly where a
 regeneration spent its time.
 
@@ -275,6 +277,16 @@ regeneration spent its time.
 `work.rebuilt_stages`), because "5 lines regenerated" is not "5 lines of work". A splice is
 refused when a changed line overlaps another, and the report says `assembled` when that
 happens.
+
+## Asking what a run cost
+
+```bash
+dubforge explain lecture-a1b2c3d4          # or --json, or the MCP tool dubforge_explain_job
+```
+
+It reads the job's `review.json` and prints which stages were reused, which were rebuilt, where
+the seconds went, the QC failures, and what one more edited line would cost. No guesses: a job
+without a `review.json` gets the reason, not a table of zeroes.
 
 ## Alignment: measured, or absent
 
@@ -405,6 +417,7 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/configuration.md](docs/configuration.md) | **every setting**: environment name, type, default, range (generated) |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
+| [docs/release-0.7.0.md](docs/release-0.7.0.md) | the 0.7.0 checklist: the cost model, extraction and placement caches |
 | [docs/release-0.6.0.md](docs/release-0.6.0.md) | the 0.6.0 checklist: stage reuse, where it stops, timing |
 | [docs/release-0.5.0.md](docs/release-0.5.0.md) | the 0.5.0 checklist: partial remixing, splice safety |
 | [docs/release-0.4.0.md](docs/release-0.4.0.md) | the 0.4.0 checklist: identity, concurrency, stem cache, review loop |
