@@ -7,6 +7,7 @@ job that existed, and a silent hiding of data loss. These tests pin the classifi
 deadline, because those are the two things a polling caller depends on.
 """
 
+import json
 import os
 import threading
 import time
@@ -314,3 +315,63 @@ def test_a_reader_never_sees_a_half_written_record(tmp_path):
         stop.set()
         thread.join(timeout=5)
     assert not failures, f"a read saw a record that was not a job: {failures[:3]}"
+
+
+def test_concurrent_writers_leave_one_valid_document(tmp_path, monkeypatch):
+    """Six writers, one frozen clock: the published record must still be a single document.
+
+    This is the invariant, and it holds on every platform.
+    """
+    from dubforge.workspace import atomic_write_text
+
+    target = tmp_path / "record.json"
+    # every call sees the same nanosecond, which is what a coarse clock does
+    monkeypatch.setattr("dubforge.workspace.time.time_ns", lambda: 1_700_000_000_000_000_000)
+
+    def write(index: int) -> None:
+        atomic_write_text(target, json.dumps({"writer": index, "pad": "x" * 4000}))
+
+    threads = [threading.Thread(target=write, args=(index,)) for index in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["writer"] in range(6), "the record is not one writer's document"
+    leftovers = [path.name for path in tmp_path.iterdir() if path.suffix == ".tmp"]
+    assert not leftovers, f"temporary files were left behind: {leftovers}"
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason=(
+        "Linux masks the collision: an already-open handle keeps writing at its own offset, so "
+        "the last writer wins and the document stays valid. Windows surfaces it as a record "
+        "with two concatenated JSON documents — which is how CI found it."
+    ),
+)
+def test_two_writers_cannot_share_one_temp_file_on_windows(tmp_path, monkeypatch):
+    """The defect CI found: a temp name unique per process, not per thread.
+
+    `atomic_write_text` used `.{name}.{pid}.{time_ns()}.tmp`. On Windows the clock is coarse
+    enough that two threads can be handed the same nanosecond, so both wrote the same temp file,
+    interleaved their bytes, and published a record containing two concatenated JSON documents.
+    `tempfile.mkstemp` asks the OS for the name instead, so uniqueness no longer depends on a
+    clock.
+    """
+    from dubforge.workspace import atomic_write_text
+
+    target = tmp_path / "record.json"
+    monkeypatch.setattr("dubforge.workspace.time.time_ns", lambda: 1_700_000_000_000_000_000)
+
+    def write(index: int) -> None:
+        atomic_write_text(target, json.dumps({"writer": index, "pad": "x" * 4000}))
+
+    threads = [threading.Thread(target=write, args=(index,)) for index in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    json.loads(target.read_text(encoding="utf-8"))  # must be one document, not two

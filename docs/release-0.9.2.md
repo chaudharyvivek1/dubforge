@@ -42,7 +42,7 @@ with.
 * `README.md` — links the generated inventory; the QC row no longer restates a count it can drift from.
 * `CHANGELOG.md`, this file, version files.
 
-## 4. Tests added (668 → 681)
+## 4. Tests added (668 → 683)
 
 Nine new tests, all in `tests/test_docs_integrity.py`:
 
@@ -67,7 +67,7 @@ require the checker to fail.
 
 ```
 tests/test_docs_integrity.py      63 passed
-full suite                        681 passed  (chunked; see §6)
+full suite                        683 passed  (chunked; see §6)
 ruff check / format               clean
 gen_reference.py --check           current (4 files)
 dubforge doctor                   ok
@@ -89,7 +89,22 @@ Reported in the message that follows the workflow run — this file is written b
   without backticks is not checked.
 * `docs/cost.md` prices are hand-maintained and will age; nothing verifies them against vendors.
 
+## 7b. A separate defect CI found during this phase
+
+`test_two_readers_agree_and_leave_valid_json` failed on Windows with
+`JSONDecodeError: Extra data: line 86` — a registry record containing **two concatenated JSON
+documents**. `atomic_write_text` named its temp file `.{name}.{pid}.{time_ns()}.tmp`, which is
+unique per process but not per thread; on Windows two threads can be handed the same nanosecond,
+so both wrote one temp file and published the interleaving.
+
+It is not a Phase 6 defect and it predates this release, but a data-corruption bug in the job
+registry is not something to leave behind a red CI. Fixed in `workspace.atomic_write_text` with
+`tempfile.mkstemp` (the OS owns uniqueness), plus a portable invariant test and a Windows-only
+regression guard. Reported here separately, as the roadmap asks.
+
 ## 8. Scope
 
-Phase 6 only. No provider verification, no security scanning, no concurrency work, no benchmark,
-no deployment changes, no behaviour change to the pipeline, jobs or QC.
+Phase 6, plus the one separate defect in §7b that CI surfaced and that a red `main` would have
+blocked. No provider verification, no security scanning, no concurrency work, no benchmark, no
+deployment changes, and no behaviour change to the pipeline, jobs or QC beyond that temp-name
+fix.

@@ -57,9 +57,23 @@ same note and still **zero rows** — nothing was verified live and nothing was 
   worker is deliberately not taken over, and recovery does not increment attempt history.
 * `docs/quality.md` points at the generated inventory as the authority and keeps the prose.
 
+### Fixed — a registry write that could publish two concatenated documents (separate defect)
+
+CI on Windows, during this phase, failed `test_two_readers_agree_and_leave_valid_json` with
+`JSONDecodeError: Extra data: line 86`. Cause: `atomic_write_text` built its temp name as
+`.{name}.{pid}.{time_ns()}.tmp` — unique per *process*, not per *thread*. Windows' system clock
+is coarse enough that two threads can be handed the same nanosecond, so two writers shared one
+temp file, interleaved their bytes, and published the result.
+
+The defect predates this release (it is the likely source of the 0.9.1 "unreadable record"
+sightings too). Fixed by asking the OS for the name with `tempfile.mkstemp`, so uniqueness no
+longer depends on a clock. Two tests: a portable invariant (six writers on a frozen clock must
+still publish one valid document, no temp files left behind) and a Windows-only regression guard,
+since Linux's file semantics mask the collision.
+
 ### Tests
 
-668 → 681.
+668 → 683.
 
 ## [0.9.1] — 2026-11-18
 

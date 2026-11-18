@@ -35,6 +35,7 @@ import os
 import re
 import shutil
 import socket
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -216,9 +217,18 @@ def atomic_write_text(path: str | Path, text: str) -> Path:
     """Write via a sibling temp file + os.replace: readers never see half a file."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    temp = target.with_name(f".{target.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    # `tempfile.mkstemp` asks the OS for a unique name. The previous name was
+    # `.{name}.{pid}.{time_ns()}.tmp`, which is unique per *process* but not per *thread*: on
+    # Windows the system clock is coarse enough that two threads can be handed the same
+    # nanosecond, so two writers shared one temp file, interleaved their bytes, and published
+    # the result — a registry record containing two concatenated JSON documents. CI caught it
+    # on Windows in 0.9.2; the defect predates that release.
+    fd, temp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+    )
+    temp = Path(temp_name)
     try:
-        with open(temp, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
