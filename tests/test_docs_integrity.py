@@ -84,6 +84,11 @@ def test_the_readme_docs_table_covers_every_docs_page():
     assert not missing, f"docs pages not linked from the README: {sorted(missing)}"
 
 
+def _plain_line(line: str) -> str:
+    """Strip markdown emphasis so "was **not** added" reads as "was not added"."""
+    return re.sub(r"\s+", " ", re.sub(r"[*_`]", "", line)).lower()
+
+
 def _documented_checks() -> dict[str, str]:
     """Every QC check named in docs/quality.md, with the severity the table claims."""
     text = (ROOT / "docs" / "quality.md").read_text(encoding="utf-8")
