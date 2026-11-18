@@ -374,18 +374,24 @@ job — absent, unreadable, corrupt — and callers flattened all three into `no
 | situation | `JobError.kind` | what `wait()` does |
 |---|---|---|
 | the record is absent | `missing` | retries while the deadline allows; if it never appears, raises `no job '<id>'` |
-| the record cannot be read (permissions, a Windows sharing violation mid-`os.replace`) | `unreadable` | raises at once — retrying a file you cannot open hides a real problem |
-| the record is not a job (bad JSON, wrong shape) | `corrupt` | raises at once; never retried |
+| the record exists but cannot be read — permissions, or the window inside `os.replace` | `unreadable` | retries while the deadline allows; if it never clears, raises the OS error (never "no job") |
+| the record is not a job (bad JSON, wrong shape) | `corrupt` | raises at once; waiting cannot heal it |
 | anything else (illegal transition, lost claim) | `job` | raises at once |
 | any other exception | — | propagates untouched |
+
+`unreadable` is retried because CI proved the need: on Windows the window inside `os.replace`
+surfaces as **Permission denied**, not as a missing file. A policy that treated it as fatal would
+abort a perfectly healthy poll, which is the 0.9.0 failure all over again in a new costume.
 
 `get()` keeps its lenient default (`None` for all of the above) because most callers want "the
 job or nothing"; `get(..., strict=True)` is the classifying form, and `status()` uses it.
 
 The stress test in `tests/test_wait_deadline.py` replaces the record 200 times while a reader
-reads it and asserts no read ever sees a half-written file: `os.replace` is atomic on POSIX, and
-the 0.9.0 Windows failure was a sharing violation, not a missing-file window. No lock was added,
-because the evidence did not ask for one.
+reads it. On Linux no read ever fails; on Windows some reads fail with `Permission denied`, which
+is the sharing violation — the very mechanism the 0.9.0 failure was. So `os.replace` is atomic on
+POSIX and *almost* atomic on Windows (the rename is, but an open handle can deny a concurrent
+open), and no lock was added: the evidence asked for classification and bounded retries, not for
+another lock.
 
 ## Lock liveness, by platform
 

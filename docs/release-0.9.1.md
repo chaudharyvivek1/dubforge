@@ -37,13 +37,36 @@ timeout could overrun its own budget.
 * Every `no job` raise in `jobs.py` is classified (five sites: `update`, `claim`, `cancel`,
   `retry`, `settings_for`, plus the poll loop), so a caller can branch on the kind anywhere.
 
+## 2b. A correction that CI forced, and why it is the better design
+
+The first version of this release raised `unreadable` immediately, on the reasoning that a file you
+cannot open is a real problem. CI on Windows disagreed, with evidence: the new atomicity stress
+test failed there with
+
+```
+unreadable: cannot read job '…': Permission denied (…\registry\….json)
+```
+
+during a plain `os.replace` — so the window that broke 0.9.0 is a *sharing violation*, and a
+policy that treats it as fatal would abort a healthy poll. The rule is now:
+
+* `missing` and `unreadable` are retried, bounded by the caller's deadline;
+* whichever is still true at the deadline is raised with its own message — `no job '<id>'` or the
+  OS error — so neither is ever disguised as the other;
+* `corrupt` and every other error still propagate on the first read.
+
+The stress test now asserts what actually matters: no read may ever see a record that is not a
+job, while a transient `unreadable` is an expected outcome of a concurrent replace.
+
 ## 3. What was investigated and deliberately not changed
 
-**Is `os.replace` racy?** No evidence found. `save()` writes a temp file and renames it; a stress
-test that replaces the record 200 times while a reader reads it never observed a half-written
-record. The 0.9.0 Windows failure is therefore best explained as a *sharing violation* (an
-`OSError` that `get()` swallowed), not a missing-file window. No lock was added: the fix that the
-evidence supports is classification, and adding a lock would have hidden the real signal.
+**Is `os.replace` racy?** Partly, and CI settled it. `save()` writes a temp file and renames it,
+and on Linux a reader never observes a half-written record across 200 concurrent replacements. On
+Windows the rename is atomic but an open handle can *deny* a concurrent open, so a reader sees
+`Permission denied` — which `get()` used to swallow into `None` and `status()` reported as
+"no job". That is the mechanism of the 0.9.0 failure, now reproduced by a test. No lock was added:
+the fix the evidence supports is classification plus a bounded retry, and a lock would have hidden
+the signal.
 
 ## 4. Tests
 
@@ -76,7 +99,7 @@ capabilities, `doctor` and the pipeline warning are unaffected — their tests a
 ```
 ruff check src tests scripts              clean
 ruff format --check src tests scripts     clean
-python -m pytest -q                       666 tests
+python -m pytest -q                       668 tests
 python scripts/gen_reference.py --check   current
 python -m dubforge doctor                 ok
 python scripts/ci_demo_check.py           passed

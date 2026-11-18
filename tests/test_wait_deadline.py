@@ -188,17 +188,43 @@ def test_g_a_corrupt_record_is_not_a_transient_miss(job):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="chmod does not deny the owner on Windows")
-def test_g_an_unreadable_record_is_not_a_transient_miss(job):
+def test_g_an_unreadable_record_is_retried_then_reported_as_unreadable(job):
+    """A file that exists but cannot be read is transient; it is never called "no job".
+
+    CI proved this is not hypothetical: on Windows the window inside `os.replace` surfaces as
+    *Permission denied*, so treating `unreadable` as fatal would abort a healthy poll. It is
+    retried within the deadline and, if it never clears, raised with the OS message.
+    """
     settings, store, record, runner = job
     path = store._path(record.id)
     os.chmod(path, 0o000)
+    started = time.monotonic()
     try:
         with pytest.raises(JobError) as caught:
-            runner.wait(record.id, timeout=2.0)
+            runner.wait(record.id, timeout=0.5)
     finally:
         os.chmod(path, 0o644)
     assert caught.value.kind == "unreadable"
     assert "cannot read job" in str(caught.value)
+    assert time.monotonic() - started < 1.5, "the deadline must bound the retries"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="chmod does not deny the owner on Windows")
+def test_g_an_unreadable_record_that_becomes_readable_recovers(job):
+    settings, store, record, runner = job
+    path = store._path(record.id)
+    store.update(record.id, status="processing", pid=1)
+    os.chmod(path, 0o000)
+
+    def restore():
+        os.chmod(path, 0o644)
+        store.update(record.id, status="completed", qc_ok=True, output="/tmp/x.mp4")
+
+    threading.Timer(0.2, restore).start()
+    try:
+        assert runner.wait(record.id, timeout=5).status == "completed"
+    finally:
+        os.chmod(path, 0o644)
 
 
 def test_g_an_unexpected_error_propagates_unchanged(job, monkeypatch):
@@ -269,15 +295,22 @@ def test_a_reader_never_sees_a_half_written_record(tmp_path):
 
     thread = threading.Thread(target=writer, daemon=True)
     thread.start()
+    transient = 0
     try:
         for _ in range(200):
             try:
                 job = store.get(record.id, strict=True)
             except JobError as exc:
+                # A concurrent replace may make the record briefly unreadable — on Windows it
+                # surfaces as "Permission denied", which is exactly what `kind == "unreadable"`
+                # is for. What must never happen is a *corrupt* read: half a JSON document.
+                if exc.kind == "unreadable":
+                    transient += 1
+                    continue
                 failures.append(f"{exc.kind}: {exc}")
                 continue
             assert job is not None
     finally:
         stop.set()
         thread.join(timeout=5)
-    assert not failures, f"a read hit a half-written record: {failures[:3]}"
+    assert not failures, f"a read saw a record that was not a job: {failures[:3]}"

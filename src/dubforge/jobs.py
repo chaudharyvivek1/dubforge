@@ -1171,13 +1171,14 @@ class JobRunner:
         * **The deadline is the caller's.** It is measured with `time.monotonic()` so a clock
           adjustment cannot stretch or shorten it, and every sleep is clamped to what is left —
           a fixed 250 ms nap must never overrun a 50 ms timeout.
-        * **A transient miss is not a missing job.** The registry record is written with
-          `os.replace`; a reader can observe the record absent (POSIX) or unreadable (a Windows
-          sharing violation) for a moment. `kind == "missing"` is retried while the deadline
-          allows, so a running job is never declared absent because of a hiccup.
-        * **Nothing else is retried.** A corrupt record, a permission error or any other
-          `JobError` propagates on the first read: hiding those behind a poll loop is how data
-          loss goes unnoticed.
+        * **A transient read failure is not a missing job.** The registry record is written
+          with `os.replace`, and a concurrent reader can observe it absent (POSIX) or
+          *unreadable* — on Windows the replace window surfaces as `Permission denied`, which a
+          stress test in `tests/test_wait_deadline.py` reproduces. Both `missing` and
+          `unreadable` are therefore retried while the deadline allows, and whichever is still
+          true at the deadline is raised with its own message: `no job '<id>'` or the OS error.
+        * **Corruption is never retried.** A record that exists and is not a job cannot heal by
+          waiting, so `corrupt` — and any other `JobError` — propagates on the first read.
         * **A job that never appears keeps its precise error.** When the deadline passes without
           a single successful read, the error is `no job '<id>'` — not a timeout message, which
           would be misleading for a typo.
@@ -1193,10 +1194,13 @@ class JobRunner:
             try:
                 job = self.status(job_id)
             except JobError as exc:
-                if exc.kind != "missing":
-                    raise  # corrupt, unreadable, or a real job error: never hidden
+                if exc.kind not in ("missing", "unreadable"):
+                    raise  # corrupt, or a real job error: never hidden
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    if exc.kind == "unreadable":
+                        # It exists but never became readable: say that, not "no job".
+                        raise
                     if not seen:
                         raise JobError(f"no job {job_id!r}", kind="missing") from exc
                     raise JobError(f"job {job_id} did not finish within {budget}s") from exc

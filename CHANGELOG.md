@@ -25,25 +25,29 @@ was reported absent, and a corrupt record was retried as if it might heal.
   callers are unaffected) — with the message unchanged for every existing case.
 * `JobStore.get(..., strict=True)` classifies instead of hiding; `JobRunner.status()` uses it.
   The lenient default is kept for the callers that only want "the job or nothing".
-* `wait()` retries **only** `kind == "missing"`, and only while the deadline allows. A corrupt
-  record, a permission error or any other `JobError` propagates on the first read. Unexpected
-  exceptions always propagated and still do.
+* `wait()` retries `missing` **and** `unreadable`, bounded by the deadline — CI proved the second
+  is needed: on Windows the window inside `os.replace` surfaces as `Permission denied`, so a
+  policy that treated it as fatal would abort a healthy poll. Whichever is still true at the
+  deadline is raised with its own message, so neither is disguised as the other.
+* A `corrupt` record or any other `JobError` propagates on the first read: waiting cannot heal a
+  bad document. Unexpected exceptions always propagated and still do.
 * The transient-miss budget is now the deadline, not a fixed 40-attempt counter, so retries can
   never extend a caller's wait.
 * Every `no job` raise in the module is classified — five sites, not just the polling path.
 
 ### Investigated, not changed — is `os.replace` racy?
 
-A stress test (a writer replacing the record 200 times while a reader reads) never observed a
+A stress test (a writer replacing the record 200 times while a reader reads) never observes a
 half-written record on Linux: `os.replace` is atomic on POSIX, and the temp file plus rename in
-`save()` is the right pattern. The Windows failure in 0.9.0 was therefore almost certainly a
-*sharing violation* (an `OSError`, previously flattened to `None`) rather than a missing-file
-window. No lock was added, because the evidence does not support one — what was missing was the
-classification that lets the poll loop tell "absent for a moment" from "unreadable, ever".
+`save()` is the right pattern. On Windows the same test reproduces the 0.9.0 failure directly —
+`Permission denied` during a replace — which confirms the mechanism: a *sharing violation*
+(an `OSError`, previously flattened to `None`), not a missing-file window. No lock was added,
+because the evidence does not support one; what was missing was the classification that lets the
+poll loop tell "absent or busy for a moment" from "not a job, ever".
 
 ### Tests
 
-647 → 666. New `tests/test_wait_deadline.py` (19) covering the brief's A–H cases: deadline
+647 → 668. New `tests/test_wait_deadline.py` (19) covering the brief's A–H cases: deadline
 respected for a nonexistent job (with elapsed time measured on a monotonic clock), very short
 timeouts, `timeout=0`, transient-miss recovery, persistent misses under a timeout, a deadline that
 is not reset by retries, completion/failure/cancellation during polling, corrupt and unreadable
