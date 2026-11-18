@@ -34,6 +34,7 @@ EXPECTED_TOOLS = {
     "dubforge_regenerate_segments",
     # review workflow
     "dubforge_explain_job",
+    "dubforge_verification_status",
     "dubforge_export_review",
     "dubforge_validate_review",
     "dubforge_apply_review",

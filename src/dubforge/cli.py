@@ -26,6 +26,7 @@ from . import (
     review,
     srt,
     stems,
+    verify,
 )
 from .config import ConfigError, Settings
 from .jobs import JobError, JobStore
@@ -485,6 +486,72 @@ def cmd_review(args) -> int:
     return EXIT_ERROR
 
 
+def cmd_verify(args) -> int:
+    """plan / run / import / status for the live-verification ledger."""
+    settings = _settings(args)
+    try:
+        if args.action == "plan":
+            data = verify.plan(settings)
+            if args.json:
+                _emit_json(data)
+            else:
+                print(verify.render_plan(data))
+            return EXIT_OK
+
+        if args.action == "status":
+            data = verify.status()
+            if args.json:
+                _emit_json(data)
+            else:
+                print(
+                    f"{data['verified']} verified, {data['checked']} row(s) in the record"
+                    + (f" (generated {data['generated_at']})" if data["generated_at"] else "")
+                )
+                print(data["note"])
+            return EXIT_OK
+
+        if args.action == "import":
+            if not args.path:
+                print("dubforge: verify import needs a file", file=sys.stderr)
+                return EXIT_ERROR
+            verdict = verify.import_record(args.path, write=not args.dry_run)
+            if args.json:
+                _emit_json(verdict)
+            else:
+                print(
+                    f"imported {verdict['rows']} row(s), {verdict['ok_rows']} ok"
+                    + (
+                        " (validated only, not written: --dry-run)"
+                        if args.dry_run
+                        else f" → {verdict['written']}"
+                    )
+                )
+            return EXIT_OK
+
+        if args.action == "run":
+            payload = verify.run(
+                settings,
+                yes_live=args.yes_live,
+                only=[s.strip() for s in (args.only or "").split(",") if s.strip()] or None,
+                providers=[s.strip() for s in (args.provider or "").split(",") if s.strip()]
+                or None,
+                write=not args.dry_run,
+                emit=None if args.json else print,
+            )
+            if args.json:
+                _emit_json(payload)
+            ok = sum(1 for row in payload["results"] if row["status"] == "ok")
+            failed = sum(1 for row in payload["results"] if row["status"] == "failed")
+            if not args.json:
+                print(f"\n{ok} ok, {failed} failed")
+            return EXIT_OK if not failed else EXIT_ERROR
+    except (verify.VerifyError, ProviderError, ProviderUnavailable) as exc:
+        print(f"dubforge: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"dubforge: unknown verify action {args.action!r}", file=sys.stderr)
+    return EXIT_ERROR
+
+
 def cmd_explain(args) -> int:
     """Print what a finished job actually cost, stage by stage."""
     settings = _settings(args)
@@ -669,6 +736,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes", action="store_true", help="cleanup: actually delete (default is a dry run)"
     )
     p.set_defaults(func=cmd_jobs)
+
+    p = sub.add_parser("verify", help="the live-verification ledger: plan, run, import, status")
+    common(p)
+    p.add_argument("action", choices=["plan", "run", "import", "status"])
+    p.add_argument("path", nargs="?", help="import: the record to accept")
+    p.add_argument(
+        "--yes-live",
+        action="store_true",
+        help="run: actually make the provider requests (spends money)",
+    )
+    p.add_argument("--only", default="", help="run: comma-separated stages (asr,translate,tts)")
+    p.add_argument("--provider", default="", help="run: comma-separated provider names")
+    p.add_argument(
+        "--dry-run", action="store_true", help="run/import: do everything except write the record"
+    )
+    p.set_defaults(func=cmd_verify)
 
     p = sub.add_parser("explain", help="show what a finished job actually cost, stage by stage")
     common(p)

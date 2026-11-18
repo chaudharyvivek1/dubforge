@@ -243,6 +243,8 @@ Offer a re-run with changes rather than claiming perfection.
 * `references/jobs.md` — the job tools: identity, claims, attempts, heartbeat, cancellation.
 * `references/batch.md` — folders, collisions, resume, a school or studio workflow.
 * `references/reliability.md` — retries, idempotency, provider health, fallback, events.
+* `references/verification.md` — the live-verification procedure: plan, run, import, and what a
+  green row does and does not mean.
 * `references/review.md` — the review loop (`export` → edit → `validate` → `apply`), the
   `review.json` artifact, alignment honesty, and what a re-run actually reuses.
 * `references/troubleshooting.md` — error messages and what they actually mean.

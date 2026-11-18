@@ -22,6 +22,7 @@ Exit codes: `0` success, `1` QC failed (the run finished and the dub did not pas
 | [`dubforge capabilities`](#dubforge-capabilities) | what this install can do, in JSON or prose |
 | [`dubforge validate-config`](#dubforge-validate-config) | check a settings file and the environment |
 | [`dubforge jobs`](#dubforge-jobs) | list, inspect, cancel, retry or clean up jobs |
+| [`dubforge verify`](#dubforge-verify) | the live-verification ledger: plan, run, import, status |
 | [`dubforge explain`](#dubforge-explain) | show what a finished job actually cost, stage by stage |
 | [`dubforge review`](#dubforge-review) | export, validate or apply a human review file |
 | [`dubforge cache`](#dubforge-cache) | inspect or clean the content caches |
@@ -191,6 +192,23 @@ list, inspect, cancel, retry or clean up jobs
 | `--yes` | cleanup: actually delete (default is a dry run) | `False` |
 
 Positional arguments: `action`, `job_id`
+
+
+## `dubforge verify`
+
+the live-verification ledger: plan, run, import, status
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `--config` | JSON settings file (keys and values as in Settings) | — |
+| `--workdir` | where intermediates go (default dubforge-work) | — |
+| `--json` | machine-readable output | off |
+| `--yes-live` | run: actually make the provider requests (spends money) | `False` |
+| `--only` | run: comma-separated stages (asr,translate,tts) | — |
+| `--provider` | run: comma-separated provider names | — |
+| `--dry-run` | run/import: do everything except write the record | `False` |
+
+Positional arguments: `action`, `path`
 
 
 ## `dubforge explain`

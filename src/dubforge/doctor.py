@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import capabilities, ffmpeg, limits
+from . import capabilities, ffmpeg, limits, verify
 from .config import Settings
 from .providers import registry
 
@@ -140,6 +140,9 @@ def checks(settings: Settings | None = None) -> dict:
                 f"{kind}: nothing ready — {row['missing'][0] if row['missing'] else 'see providers'}"
             )
 
+    # The verification ledger, in the same payload as everything else, so a caller does not
+    # have to know that "is it verified" lives in a different command.
+    report["verification"] = verify.status()
     report["settings"] = {
         "target_lang": settings.target_lang,
         "source_lang": settings.source_lang,
@@ -212,6 +215,12 @@ def text(settings: Settings | None = None) -> str:
         lines.append("hints")
         lines += [f"  - {h}" for h in r["hints"]]
     lines.append("")
+    ledger = verify.status()
+    lines.append(
+        f"verification: {ledger['verified']} adapter(s) verified against a live API"
+        + (f", record generated {ledger['generated_at']}" if ledger["generated_at"] else "")
+        + " — `dubforge verify plan` lists what would need a key"
+    )
     lines.append("Run `dubforge providers` for every adapter, including the unverified ones.")
     return "\n".join(lines)
 

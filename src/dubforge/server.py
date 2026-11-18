@@ -40,6 +40,7 @@ from . import (
     qc,
     review,
     srt,
+    verify,
 )
 from .config import ConfigError, Settings, is_language_code
 from .jobs import JobError, JobRunner, JobStore
@@ -904,6 +905,25 @@ def build_server():
             alignment=result.alignment,
             warnings=result.warnings[:10],
             note="a new file was written; the previous output is untouched",
+        )
+
+    @mcp.tool()
+    @guard
+    def dubforge_verification_status() -> str:
+        """What has actually been verified against a live API, read from
+        docs/verification.json. Read-only: it never makes a provider request.
+
+        Use it before telling a user a provider "works" — an adapter is verified only when its
+        row in that record says ok, and every adapter ships unverified.
+        """
+        data = verify.status()
+        planned = verify.plan(_settings())
+        return _ok(
+            **data,
+            adapters=planned["total"],
+            ready_now=planned["ready"],
+            ready_list=planned["run"],
+            how="dubforge verify plan | run --yes-live | import <file>",
         )
 
     @mcp.tool()

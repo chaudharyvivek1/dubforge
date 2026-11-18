@@ -3,10 +3,10 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-608%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-629%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-26%20tools-6f42c1)](src/dubforge/server.py)
+[![MCP](https://img.shields.io/badge/MCP-27%20tools-6f42c1)](src/dubforge/server.py)
 [![demo offline](https://img.shields.io/badge/demo-no%20key%2C%20no%20network-orange)](#try-it-in-one-command)
 
 **Dub any video into any language — with several AI providers in one pipeline that
@@ -171,7 +171,7 @@ makes the smallest real request each vendor allows, records the date and API ver
 `docs/verification.json`, and a test fails if an adapter claims `verified` without an `ok`
 row there. Nothing is marked verified until someone has actually spent a rupee on it.
 
-Twenty-six tools, and the intended order is in the server's instructions:
+Twenty-seven tools, and the intended order is in the server's instructions:
 `dubforge_doctor` → `plan_dub` → `dub_video` (or `dubforge_submit_job` for anything long)
 → read `qc`. Transcripts come back as
 a path and a five-line preview, never as a wall of text.
@@ -277,6 +277,23 @@ regeneration spent its time.
 `work.rebuilt_stages`), because "5 lines regenerated" is not "5 lines of work". A splice is
 refused when a changed line overlaps another, and the report says `assembled` when that
 happens.
+
+## Proving a provider actually works
+
+Every network adapter ships `verified: false`, and the flag is *derived*: a test fails if an
+adapter claims verification without an `ok` row in `docs/verification.json`.
+
+```bash
+dubforge verify plan            # what would run, which key, what it costs — no requests
+dubforge verify run --yes-live  # the real thing; refuses without the flag
+dubforge verify import rec.json # accept evidence produced on a machine that had keys
+dubforge verify status          # what the ledger says now
+```
+
+A row that says `ok` means the credentials work and the response shape is right. It does not
+mean the voice sounds good or the translation is accurate — that needs a human, which is what
+`review.json` is for. The full procedure, and what a rejected import looks like, is in
+[docs/verification.md](docs/verification.md).
 
 ## Asking what a run cost
 
@@ -417,6 +434,8 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/configuration.md](docs/configuration.md) | **every setting**: environment name, type, default, range (generated) |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
+| [docs/verification.md](docs/verification.md) | the live-verification procedure, the record, and what it is worth |
+| [docs/release-0.8.0.md](docs/release-0.8.0.md) | the 0.8.0 checklist: the verification ledger, plan/run/import |
 | [docs/release-0.7.0.md](docs/release-0.7.0.md) | the 0.7.0 checklist: the cost model, extraction and placement caches |
 | [docs/release-0.6.0.md](docs/release-0.6.0.md) | the 0.6.0 checklist: stage reuse, where it stops, timing |
 | [docs/release-0.5.0.md](docs/release-0.5.0.md) | the 0.5.0 checklist: partial remixing, splice safety |

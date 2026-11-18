@@ -2,7 +2,7 @@
 
 # MCP tool reference
 
-All 26 tools, generated from the running server: names, descriptions and
+All 27 tools, generated from the running server: names, descriptions and
 input schemas are read from the code, so this page is the schema.
 
 ## Response envelope
@@ -40,6 +40,7 @@ an envelope, never an exception the transport has to render.
 | [`dubforge_submit_job`](#dubforge_submit_job) | Start a dub in the background and return a job id immediately. |
 | [`dubforge_validate_config`](#dubforge_validate_config) | Check a settings file and the environment, without starting any work. |
 | [`dubforge_validate_review`](#dubforge_validate_review) | Check a review file against its job before applying it: schema, staleness, |
+| [`dubforge_verification_status`](#dubforge_verification_status) | What has actually been verified against a live API, read from |
 | [`dubforge_version`](#dubforge_version) | Version of the running dubforge package, plus the error codes this server can return. |
 | [`get_qc`](#get_qc) | Read the QC report of a finished run from its work directory. |
 | [`list_providers`](#list_providers) | Every adapter with readiness, capabilities, honest quality note and the `verified` flag. |
@@ -277,6 +278,17 @@ unknown or duplicated segments, oversized or non-string text.
 | Parameter | Required | Type | Default / allowed |
 | --- | --- | --- | --- |
 | `review_path` | yes | string | — |
+
+
+## `dubforge_verification_status`
+
+What has actually been verified against a live API, read from
+docs/verification.json. Read-only: it never makes a provider request.
+
+Use it before telling a user a provider "works" — an adapter is verified only when its
+row in that record says ok, and every adapter ships unverified.
+
+No parameters.
 
 
 ## `dubforge_version`

@@ -2,6 +2,57 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.8.0] — 2026-11-18
+
+The verification ledger. The one thing left on the honesty ledger — no adapter has been
+exercised against a live API — is the one thing that needs keys this repository does not have.
+So this release makes it executable, auditable, and importable, without pretending any of it
+has happened.
+
+### Added — `dubforge verify` (P1)
+
+* `verify.py` (moved out of `scripts/verify_providers.py`, which now delegates) with four
+  actions:
+  * **plan** — every network adapter, the environment variable it needs, whether it is present,
+    whether a check exists for its stage, and what the probe costs in the vendor's units. It
+    builds each adapter to ask `missing()` and calls nothing else; a spy in the tests raises if
+    it ever touches `transcribe`, `translate`, `synthesize` or `voices`.
+  * **run** — the smallest real call per stage, refusing without `--yes-live`. A missing key is
+    `skipped`, a vendor error is `failed` with its `error_kind`.
+  * **import** — accept a record produced on a machine that had keys, after validating it.
+  * **status** — what the ledger says now.
+* `docs/verification.md`: the procedure end to end, what a green row does and does not mean,
+  and the honest state today.
+* `dubforge_verification_status` (27 tools): read-only, so an agent can answer "is this provider
+  verified?" from the record instead of from optimism.
+
+### Added — import validation
+
+An imported record is checked before it can influence anything: schema version, every
+`stage/provider` pair must exist in the registry, no duplicate adapters, statuses from the fixed
+set, an **ISO date on every `ok` row** (a claim without a date cannot be audited), and a
+credential tripwire (`sk-…`, `api_key=…`, any 32+ character opaque string). Every problem is
+reported at once, so one round trip fixes them all.
+
+### Changed
+
+* `doctor` reports the ledger in text and in `--json` (`verification`), so "is it verified"
+  lives beside everything else rather than in a separate command.
+* `capabilities` unchanged in shape; the ledger is a separate, explicit read.
+
+### Tests
+
+608 → 629. `tests/test_verify_providers.py` was rewritten against the module rather than the
+script — same assertions, moved with the code — plus the ledger rules: plan readiness, plan
+calls nothing, opt-in refusal, no key in a written record, unknown adapter, duplicate row,
+unknown status, `ok` without a date, a credential in a field, dry-run import, and status counts.
+
+### Honest state
+
+`docs/verification.json` still has zero rows. Every adapter is unverified, calibration has no
+measured samples, and every run reports sentence-level timing only. This release makes the next
+step a command instead of a task.
+
 ## [0.7.0] — 2026-11-18
 
 The last two passes, and a command that explains the bill. A regeneration that changes nothing
