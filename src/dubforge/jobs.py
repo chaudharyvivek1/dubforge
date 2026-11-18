@@ -1120,13 +1120,41 @@ class JobRunner:
         return self.submit(job.source, settings, job.output or None)
 
     def wait(self, job_id: str, timeout: float | None = None) -> Job:
-        """Block until the job reaches a terminal state (for the CLI and for tests)."""
+        """Block until the job reaches a terminal state (for the CLI and for tests).
+
+        A poll loop must tolerate a *transient* miss. The registry record is written with
+        `os.replace`, and on Windows a concurrent reader can observe the moment between the
+        unlink and the rename, where the path does not resolve — a batch of jobs then failed
+        with "no job" while the job was running perfectly well. A genuine miss still raises as
+        soon as the deadline passes, so the error a caller sees is the same one as before; it
+        just is not raised on a hiccup.
+        """
         deadline = time.time() + (timeout if timeout is not None else 24 * 3600)
+        misses = 0
+        seen = False
         while time.time() < deadline:
-            job = self.status(job_id)
+            try:
+                job = self.status(job_id)
+            except JobError as exc:
+                if "no job" not in str(exc):
+                    raise
+                misses += 1
+                if misses == 1:
+                    # First miss: give the writer a moment before deciding anything.
+                    time.sleep(0.1)
+                    continue
+                if misses > 40:  # ~10 s of consecutive misses is a real absence
+                    raise
+                time.sleep(0.25)
+                continue
+            misses = 0
+            seen = True
             if job.terminal:
                 return job
             time.sleep(0.25)
+        if not seen:
+            # Never once resolved: the precise error a caller expects, not a timeout message.
+            raise JobError(f"no job {job_id!r}")
         raise JobError(f"job {job_id} did not finish within {timeout}s")
 
     def shutdown(self, wait: bool = True, timeout: float = 30.0) -> None:

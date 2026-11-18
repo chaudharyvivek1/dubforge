@@ -62,7 +62,7 @@ declaration had been hiding.
 ```
 ruff check src tests scripts              clean
 ruff format --check src tests scripts     clean
-python -m pytest -q                       645 tests
+python -m pytest -q                       647 tests
 python scripts/gen_reference.py --check   current
 python -m dubforge doctor                 ok — "0 verified, 1 local proven by the suite"
 python scripts/ci_demo_check.py           passed

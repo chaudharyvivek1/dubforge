@@ -37,13 +37,23 @@ contradiction instead of believed.
 * `capabilities` provider rows carry `verified` (effective) plus a `verification` object with the
   date, age, source and note. `doctor` reports stale and contradiction counts.
 
+### Fixed — a poll loop that turned a hiccup into a missing job
+
+* `JobRunner.wait()` called `status()` in a loop and let any `JobError` through. The registry
+  record is written with `os.replace`, and on Windows a concurrent reader can observe the moment
+  where the path does not resolve — so a batch failed with `no job 'b-e1b8a1dc'` while the job
+  was running perfectly well. `wait()` now tolerates a transient miss, and still raises the
+  precise `no job` error when a job never resolves at all (a timeout message would be worse).
+  Found by CI on Windows, not by a test; the two tests that now cover it were written after.
+
 ### Tests
 
-629 → 645. New `tests/test_verification_state.py` (15): a fresh row verifies, an old row expires,
+629 → 647. New `tests/test_verification_state.py` (15): a fresh row verifies, an old row expires,
 the expiry is configurable, a failed row is not verified, an `ok` row with no readable date is not
 trusted, no row means unverified, a local adapter is proven by the suite, a network declaration
 without a row is a contradiction, the real registry has none, `capabilities` reports the ledger
-and expires a stale row, and the pipeline warns only about unproven adapters.
+and expires a stale row, and the pipeline warns only about unproven adapters; `tests/test_jobs.py` gained the transient-miss
+and never-existed cases for `wait()`.
 
 ### Honest state
 

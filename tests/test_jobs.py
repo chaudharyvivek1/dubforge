@@ -331,3 +331,50 @@ def test_a_fresh_heartbeat_keeps_a_live_job_alive(store, settings, tmp_path, mon
     store.update(job.id, status=PROCESSING, pid=os.getpid(), heartbeat_at=time.time())
     monkeypatch.setattr(jobs_module, "_can_probe_pid", lambda: False)
     assert store.get(job.id).status == PROCESSING
+
+
+def test_wait_survives_a_transient_registry_miss(tmp_path, monkeypatch):
+    """A poll loop must not turn a Windows sharing hiccup into "no job".
+
+    The registry record is replaced with `os.replace`, and a concurrent reader can see the
+    moment where the path does not resolve. A batch of jobs failed on Windows for exactly this,
+    while the job itself was running fine.
+    """
+    from dubforge.jobs import JobError, JobRunner, JobStore
+
+    source = _source(tmp_path)
+    settings = Settings(target_lang="hi", workdir=str(tmp_path / "work"))
+    store = JobStore(settings.workdir)
+    job = store.create(source, settings)
+    store.update(job.id, status="processing", pid=1)  # legal transitions only
+    store.update(job.id, status="completed", qc_ok=True, output=str(tmp_path / "out.mp4"))
+
+    real_status = JobRunner.status
+    calls = {"n": 0}
+
+    def flaky(self, job_id):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise JobError(f"no job {job_id!r}")  # the transient window
+        return real_status(self, job_id)
+
+    monkeypatch.setattr(JobRunner, "status", flaky)
+    runner = JobRunner(settings)
+    try:
+        final = runner.wait(job.id, timeout=30)
+    finally:
+        runner.shutdown(wait=True)
+    assert final.status == "completed"
+    assert calls["n"] >= 3, "wait must have retried through the miss"
+
+
+def test_wait_still_raises_for_a_job_that_never_existed(tmp_path):
+    from dubforge.jobs import JobError, JobRunner
+
+    settings = Settings(target_lang="hi", workdir=str(tmp_path / "work"))
+    runner = JobRunner(settings)
+    try:
+        with pytest.raises(JobError, match="no job"):
+            runner.wait("does-not-exist", timeout=1)
+    finally:
+        runner.shutdown(wait=True)
