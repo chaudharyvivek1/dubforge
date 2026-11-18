@@ -344,6 +344,7 @@ class TranscriptFileASR(ASRProvider):
         capabilities=("reuse_transcript",),
         languages="n/a",
         verified=True,
+        local=True,
         quality="Exactly as good as the transcript you supply — and free.",
         notes="Point DUBFORGE_TRANSCRIPT at the file. JSON must be a dubforge transcript dump.",
     )

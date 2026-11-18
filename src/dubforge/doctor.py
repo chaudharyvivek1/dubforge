@@ -218,7 +218,13 @@ def text(settings: Settings | None = None) -> str:
     ledger = verify.status()
     lines.append(
         f"verification: {ledger['verified']} adapter(s) verified against a live API"
-        + (f", record generated {ledger['generated_at']}" if ledger["generated_at"] else "")
+        + (f", {ledger['stale']} stale" if ledger.get("stale") else "")
+        + (
+            f", {ledger['contradictions']} contradicting the record"
+            if ledger.get("contradictions")
+            else ""
+        )
+        + f"; {ledger.get('local', 0)} local adapter(s) proven by the suite"
         + " — `dubforge verify plan` lists what would need a key"
     )
     lines.append("Run `dubforge providers` for every adapter, including the unverified ones.")

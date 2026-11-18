@@ -61,6 +61,10 @@ class Spec:
     capabilities: tuple[str, ...] = ()
     languages: str = "any"
     verified: bool = False
+    # `local` means the work happens in this process or in ffmpeg, so the test suite proves it
+    # on every run. A network adapter has no such proof: it needs a dated row in
+    # docs/verification.json, and `verify` reports a declaration without one as a contradiction.
+    local: bool = False
     quality: str = ""  # honest one-liner: what this is good and bad at
     notes: str = ""
     docs: str = ""

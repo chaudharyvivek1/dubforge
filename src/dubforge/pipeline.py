@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import alignment, dialogue, events, ffmpeg, fit, mix, qc, srt, stems, timeline
+from . import alignment, dialogue, events, ffmpeg, fit, mix, qc, srt, stems, timeline, verify
 from . import limits as limits_mod
 from . import segments as segment_store
 from .config import Settings
@@ -209,11 +209,9 @@ def plan(source: str | Path, settings: Settings | None = None) -> DubPlan:
         try:
             provider = registry.resolve(kind, settings)
             chosen[kind] = provider.name
-            if provider.spec.kind != "lipsync" and not provider.spec.verified:
-                notes.append(
-                    f"{kind} provider '{provider.name}' is unverified in this release: "
-                    "its adapter is written against vendor docs, so check its first output."
-                )
+            note = _verification_note(kind, provider)
+            if note:
+                notes.append(note)
         except ProviderUnavailable as exc:
             problems.append(f"{kind}: {exc}")
             chosen[kind] = "unavailable"
@@ -447,6 +445,26 @@ def _validate_output(path: Path, source_info) -> None:
             f"the muxed output is {info.duration:.1f}s against a "
             f"{source_info.duration:.1f}s source — refusing to publish it"
         )
+
+
+def _verification_note(kind: str, provider) -> str:
+    """The "you are running an unproven adapter" warning, or nothing when it is proven.
+
+    Kept as a function so the rule can be tested without building a whole plan: the ledger
+    decides, and a local adapter (proven by the suite) is not warned about.
+    """
+    spec = provider.spec
+    if spec.kind == "lipsync":
+        return ""
+    state = verify.state_for(
+        kind, provider.name, declared=bool(spec.verified), local=bool(spec.local)
+    )
+    if state.verified:
+        return ""
+    return (
+        f"{kind} provider '{provider.name}' is unverified in this release ({state.note}): "
+        "its adapter is written against vendor docs, so check its first output."
+    )
 
 
 def _rebuilt_stages(result: DubResult) -> list[str]:

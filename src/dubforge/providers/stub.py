@@ -58,6 +58,7 @@ class StubASR(ASRProvider):
         capabilities=("diarize", "word_timings"),
         languages="whatever you type",
         verified=True,
+        local=True,
         quality="Not recognition. Segments come from the text you supply and the audio's own silences.",
         notes="Set DUBFORGE_SCRIPT to the transcript text, or use `dubforge demo`.",
     )
@@ -157,6 +158,7 @@ class StubTranslator(Translator):
         title="Identity 'translator' (offline)",
         languages="none",
         verified=True,
+        local=True,
         quality="Does not translate. Copies the source text so the rest of the pipeline can be tested.",
         notes="QC marks every segment it touched, so a stub run can never look like a real dub.",
     )
@@ -178,6 +180,7 @@ class StubTTS(TTSProvider):
         capabilities=("duration_follows_text",),
         languages="none",
         verified=True,
+        local=True,
         quality="A tone, not a voice. Right length, right place, no words.",
         notes="Used by `dubforge demo` to prove the timing and mix chain without a key.",
     )
@@ -210,6 +213,7 @@ class NullSeparator(Separator):
         kind="separator",
         title="No separation",
         verified=True,
+        local=True,
         quality="Keeps the original audio as the bed, dialogue included. Fine for clean voice-over material.",
     )
 
@@ -223,6 +227,7 @@ class NoLipSync(LipSync):
         kind="lipsync",
         title="No lip sync",
         verified=True,
+        local=True,
         quality="Audio-only dubbing. The picture is untouched.",
     )
 

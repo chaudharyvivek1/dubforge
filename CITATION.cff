@@ -10,7 +10,7 @@ authors:
 repository-code: "https://github.com/chaudharyvivek1/dubforge"
 url: "https://github.com/chaudharyvivek1/dubforge"
 license: MIT
-version: "0.8.0"
+version: "0.9.0"
 date-released: "2026-11-18"
 abstract: >-
   A dubbing pipeline that coordinates several AI providers: speech recognition with

@@ -2,6 +2,55 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.9.0] — 2026-11-18
+
+The ledger becomes authoritative. 0.8.0 wrote `docs/verification.json`; nothing read it. Now the
+record decides what is verified, a row expires, and a claim with no evidence is reported as a
+contradiction instead of believed.
+
+### Fixed — the ledger was write-only
+
+* `spec.verified` was a static field, so a record full of `ok` rows changed nothing:
+  `capabilities`, `doctor`, the provider list and the pipeline's "unverified adapter" warning all
+  read the declaration. They now read `verify.state_for(...)`, which resolves the record and
+  reports where the answer came from (`record`, `local`, `declared`, `none`).
+* The pipeline warning is now `_verification_note()`, a testable function: it is silent for a
+  proven adapter and names the reason for an unproven one.
+
+### Added — expiry, and the local/network distinction
+
+* A verification is a fact with a date. An `ok` row older than `MAX_AGE_DAYS` (180) stops
+  counting, is reported as `stale` with its age, and says "re-run to renew" — vendors change
+  endpoints, models and prices, so a row from another season is evidence of another system.
+* `Spec.local` makes an existing distinction explicit: local adapters (the stub, the transcript
+  reader, ffmpeg centre-removal, the two "none" providers) run in-process or in ffmpeg, so the
+  test suite proves them on every run. Their declaration *is* evidence, labelled `source: local`
+  — a different promise from "verified against a live API on 2026-11-18".
+* A network adapter that declares `verified` with no row behind it is now a reported
+  **contradiction**. Turning the resolver on found one immediately: `ffmpeg_center` declared
+  verified and was neither local nor recorded — the model had no way to say what it meant.
+
+### Changed
+
+* `verify.status()` reports `verified` (live rows only), `verified_live`, `local`, `stale`,
+  `contradictions`, `max_age_days` and per-adapter `states`.
+* `capabilities` provider rows carry `verified` (effective) plus a `verification` object with the
+  date, age, source and note. `doctor` reports stale and contradiction counts.
+
+### Tests
+
+629 → 645. New `tests/test_verification_state.py` (15): a fresh row verifies, an old row expires,
+the expiry is configurable, a failed row is not verified, an `ok` row with no readable date is not
+trusted, no row means unverified, a local adapter is proven by the suite, a network declaration
+without a row is a contradiction, the real registry has none, `capabilities` reports the ledger
+and expires a stale row, and the pipeline warns only about unproven adapters.
+
+### Honest state
+
+`docs/verification.json` still has zero rows: every network adapter is unverified, and every run
+says so with its reason. What changed is that the mechanism now *works* — a dated row would flip
+`capabilities`, silence the pipeline warning, and expire on its own.
+
 ## [0.8.0] — 2026-11-18
 
 The verification ledger. The one thing left on the honesty ledger — no adapter has been

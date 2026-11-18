@@ -5,7 +5,7 @@ report, then implement in separate reviewed changes. **Every row below states th
 shipped in, or that it is still missing.** Where a feature is partial, it says exactly how
 far it goes.
 
-Current release: **0.8.0**. Everything in "implemented" is tested; everything else is
+Current release: **0.9.0**. Everything in "implemented" is tested; everything else is
 not, and is not advertised anywhere.
 
 ---
@@ -91,7 +91,7 @@ next phase closes (see §5).
 | MCP | `translate_transcript`, `generate_speech` as separate stage tools | **missing** | the pipeline, regeneration and the review loop are exposed; a stage tool would need a segment-level contract for the caller |
 | Providers | fallback chain when a provider fails mid-run | **done (0.2.0)** | opt-in, announced, recorded in `providers_used` |
 | Providers | health check beyond "is the key set" | **done (0.2.0)** | cheap authenticated probe for 7 adapters, honest "no probe" for the rest |
-| Providers | a repeatable live-verification process | **done (0.8.0)** | `dubforge verify plan\|run\|import\|status`, validated records, dated `ok` rows; nothing verified live yet |
+| Providers | a repeatable live-verification process | **done (0.9.0)** | `dubforge verify plan\|run\|import\|status`; the record drives `verified`, rows expire after 180 days, local adapters are labelled; nothing verified live yet |
 | Providers | rate-limit aware retry with backoff budget | **done (0.2.0)** | `Retry-After` honoured; `max_retries` configurable |
 | Limits | input size, duration, runtime, cost, concurrency, retries, retention | **done (0.2.0)** | `limits.py`, checked before spending and between stages |
 | Batch | folder processing, failure isolation, resume, aggregate estimate | **done (0.2.0)** | `batch.py` + `dubforge batch` |

@@ -59,6 +59,7 @@ class FFmpegCenterSeparator(Separator):
         capabilities=("stereo_only", "fast"),
         languages="n/a",
         verified=True,
+        local=True,
         quality="Splits mid from side. Keeps the stereo music bed and most of the dialogue is removed, "
         "but the original voice bleeds through and mono sources cannot be separated at all.",
         notes="Zero dependencies, instant. Use demucs when quality matters; this is the fallback that "
@@ -90,6 +91,7 @@ class NoneSeparator(Separator):
         kind="separator",
         title="No separation",
         verified=True,
+        local=True,
         quality="The original audio becomes the bed, dialogue included. Only right when the source is "
         "clean narration or a single speaker over silence.",
     )

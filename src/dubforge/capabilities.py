@@ -13,7 +13,7 @@ such everywhere.
 
 from __future__ import annotations
 
-from . import limits
+from . import limits, verify
 from .config import Settings
 from .providers import registry
 
@@ -48,13 +48,17 @@ def _provider_rows(settings: Settings, kind: str) -> list[dict]:
     for name in registry.names(kind):
         provider = registry.create(kind, name, settings)
         spec = provider.spec
+        state = verify.state_for(kind, name, declared=bool(spec.verified), local=bool(spec.local))
         rows.append(
             {
                 "name": spec.name,
                 "title": spec.title,
                 "ready": provider.available,
                 "missing": provider.missing(),
-                "verified": spec.verified,
+                # Effective, from the ledger: a declaration alone is not evidence for a
+                # network adapter, and `verification` says where the answer came from.
+                "verified": state.verified,
+                "verification": state.to_dict(),
                 "capabilities": list(spec.capabilities),
                 "languages": spec.languages,
                 "quality": spec.quality,
@@ -72,7 +76,18 @@ def _feature(kind: str, settings: Settings, capability: str) -> dict:
             continue  # a test double does not make a feature "supported"
         provider = registry.create(kind, name, settings)
         if capability in provider.spec.capabilities and provider.available:
-            return {"supported": True, "provider": name, "verified": provider.spec.verified}
+            state = verify.state_for(
+                kind,
+                name,
+                declared=bool(provider.spec.verified),
+                local=bool(provider.spec.local),
+            )
+            return {
+                "supported": True,
+                "provider": name,
+                "verified": state.verified,
+                "verification": state.to_dict(),
+            }
     return {"supported": False, "provider": None, "verified": False}
 
 

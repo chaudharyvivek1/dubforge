@@ -73,11 +73,46 @@ evidence. `import` validates before accepting:
 
 A rejected import lists every problem at once, so one round trip is enough.
 
+## How the flag is actually derived
+
+`verified` is not a field anyone edits. It is computed:
+
+```
+spec.verified          a declaration by the adapter author
+        │
+        ├── local adapter (spec.local) ────────────► verified, source "local"
+        │                                           (the test suite proves it every run)
+        │
+        └── network adapter
+                │
+                ├── ok row, younger than 180 days ─► verified, source "record", with its age
+                ├── ok row, older than 180 days ───► stale, not verified, "re-run to renew"
+                ├── failed / skipped row ──────────► not verified, with the vendor's reason
+                ├── ok row with no readable date ──► not verified ("cannot be audited")
+                └── no row at all ─────────────────► not verified; a *declaration* with no row
+                                                     is reported as a contradiction
+```
+
+Two consequences worth knowing:
+
+* **A verification expires.** A row from two seasons ago is evidence of a system that has since
+  changed its endpoints, models and prices. After `MAX_AGE_DAYS` (180) it stops counting and says
+  how old it is, instead of quietly standing.
+* **"Local" is a different promise, and is labelled as one.** The stub, the transcript reader,
+  ffmpeg centre-removal and the two "none" providers run in this process or in ffmpeg, so the
+  test suite exercises them on every commit. That is evidence, but it is not a live API check,
+  and the record says `source: "local"` rather than blending the two.
+
+Turning this resolver on found a real modelling gap: `ffmpeg_center` declared `verified` while
+being neither local-by-marker nor recorded, so the system had no way to say what it meant. It is
+now marked local, which is what it always was.
+
 ## What a green row does *and does not* mean
 
 | a row saying `ok` means | it does not mean |
 |---|---|
-| the credentials work | the voice sounds good |
+| the credentials worked on that date | that they work today (hence the expiry) |
+| the response shape is what the adapter expects | that the voice sounds good |
 | the response shape is what the adapter expects | the translation is accurate |
 | a payload of the right kind came back | the price you were quoted is current |
 | this version of DubForge was tested with it | it will work tomorrow |

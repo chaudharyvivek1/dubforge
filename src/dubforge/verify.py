@@ -28,6 +28,7 @@ import os
 import re
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__, ffmpeg
@@ -37,6 +38,10 @@ from .providers.base import ProviderError, ProviderUnavailable
 
 RECORD = Path(__file__).resolve().parents[2] / "docs" / "verification.json"
 SCHEMA = 1
+# A verification is a fact with a date on it. Vendors change endpoints, models and prices, so
+# a row from two years ago is evidence of a different system. After this, it stops counting and
+# says why.
+MAX_AGE_DAYS = 180
 MAX_DETAIL = 300
 STATUSES = ("ok", "failed", "skipped", "unsupported")
 
@@ -55,6 +60,25 @@ SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*\S+"),
     re.compile(r"[A-Za-z0-9_\-]{32,}"),
 )
+
+
+@dataclass
+class State:
+    """The effective verification state of one adapter, and where that answer came from."""
+
+    stage: str
+    provider: str
+    verified: bool
+    status: str = "unverified"  # ok | failed | skipped | stale | unverified | unsupported
+    checked_at: str = ""
+    age_days: int | None = None
+    stale: bool = False
+    source: str = "none"  # record | declared | none
+    contradiction: bool = False  # declared verified, no evidence
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
 
 
 class VerifyError(RuntimeError):
@@ -109,20 +133,177 @@ def plan(settings: Settings | None = None) -> dict:
     }
 
 
+def _age_days(checked_at: str, now: float | None = None) -> int | None:
+    """Age of a check, from its ISO date. None when the date cannot be read."""
+    text = (checked_at or "").strip()
+    if not text:
+        return None
+    for pattern in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            stamp = time.mktime(time.strptime(text, pattern))
+        except ValueError:
+            continue
+        # mktime reads local time; the record is UTC. The error is hours, and the threshold is
+        # months, so this is honest enough and platform-independent.
+        return max(0, int(((now or time.time()) - stamp) / 86400))
+    return None
+
+
+def state_for(
+    kind: str,
+    name: str,
+    record: dict | None = None,
+    *,
+    declared: bool = False,
+    local: bool = False,
+    max_age_days: int = MAX_AGE_DAYS,
+    now: float | None = None,
+) -> State:
+    """The effective state: the record decides, the spec only declares.
+
+    Two kinds of evidence count, and they are not the same promise:
+
+    * a **local** adapter (`spec.local`) runs in this process or in ffmpeg, so the test suite
+      exercises it on every run. Its declaration is the evidence, and it is labelled
+      `source: "local"` rather than pretending to be a live verification.
+    * a **network** adapter needs a dated `ok` row. A declaration without one is a
+      contradiction, reported as such, because the whole point of the ledger is that the claim
+      has evidence — and a row older than `max_age_days` is evidence of a system that has since
+      changed, so it expires.
+    """
+    payload = record if record is not None else load()
+    rows = [
+        row
+        for row in payload.get("results", [])
+        if row.get("stage") == kind and row.get("provider") == name
+    ]
+    if not rows:
+        if declared and local:
+            return State(
+                stage=kind,
+                provider=name,
+                verified=True,
+                status="local",
+                source="local",
+                note="local adapter: exercised by the test suite, no live API involved",
+            )
+        if declared:
+            return State(
+                stage=kind,
+                provider=name,
+                verified=False,
+                status="unsupported",
+                source="declared",
+                contradiction=True,
+                note="the adapter declares verified but the record has no row for it",
+            )
+        return State(
+            stage=kind,
+            provider=name,
+            verified=False,
+            status="unverified",
+            note="never verified against a live API",
+        )
+
+    row = rows[-1]  # the most recent run wins; import validation rejects duplicates
+    status_value = str(row.get("status") or "")
+    checked_at = str(row.get("checked_at") or "")
+    age = _age_days(checked_at, now)
+    if status_value != "ok":
+        return State(
+            stage=kind,
+            provider=name,
+            verified=False,
+            status=status_value or "unverified",
+            checked_at=checked_at,
+            age_days=age,
+            source="record",
+            note=str(row.get("detail") or "")[:200] or f"last check: {status_value}",
+        )
+    if age is None:
+        return State(
+            stage=kind,
+            provider=name,
+            verified=False,
+            status="unverified",
+            checked_at=checked_at,
+            source="record",
+            note="an ok row without a readable date cannot be trusted",
+        )
+    if age > max_age_days:
+        return State(
+            stage=kind,
+            provider=name,
+            verified=False,
+            status="stale",
+            checked_at=checked_at,
+            age_days=age,
+            stale=True,
+            source="record",
+            note=f"verified {age} days ago (limit {max_age_days}); re-run to renew",
+        )
+    return State(
+        stage=kind,
+        provider=name,
+        verified=True,
+        status="ok",
+        checked_at=checked_at,
+        age_days=age,
+        source="record",
+        note=f"verified {age} day(s) ago",
+    )
+
+
+def effective(kind: str, name: str, settings: Settings | None = None) -> bool:
+    """Whether this adapter may be called verified right now."""
+    settings = settings or Settings()
+    provider = registry.create(kind, name, settings)
+    spec = provider.spec
+    return state_for(kind, name, declared=bool(spec.verified), local=bool(spec.local)).verified
+
+
+def all_states(settings: Settings | None = None, record: dict | None = None) -> list[State]:
+    """Every adapter's effective state, for `capabilities`, `doctor` and `verify status`."""
+    settings = settings or Settings()
+    payload = record if record is not None else load()
+    states: list[State] = []
+    for kind in registry.REGISTRY:
+        for name in registry.names(kind):
+            if name in ("stub", "transcript", "none"):
+                continue
+            provider = registry.create(kind, name, settings)
+            spec = provider.spec
+            states.append(
+                state_for(kind, name, payload, declared=bool(spec.verified), local=bool(spec.local))
+            )
+    return states
+
+
 def status() -> dict:
-    """A one-line summary of the ledger, for `doctor` and `capabilities`."""
+    """A summary of the ledger: what counts now, what has expired, what contradicts."""
     record = load()
     rows = record.get("results", [])
-    ok = [row for row in rows if row.get("status") == "ok"]
+    states = all_states(record=record)
+    verified = [state for state in states if state.verified and state.source == "record"]
+    local = [state for state in states if state.source == "local"]
+    stale = [state for state in states if state.stale]
+    contradictions = [state for state in states if state.contradiction]
     return {
-        "verified": len(ok),
+        "verified": len(verified),
+        "verified_live": [f"{state.stage}/{state.provider}" for state in verified],
+        "local": len(local),
         "checked": len(rows),
+        "adapters": len(states),
+        "stale": len(stale),
+        "contradictions": len(contradictions),
+        "max_age_days": MAX_AGE_DAYS,
         "generated_at": record.get("generated_at"),
         "schema": record.get("schema"),
         "record": str(RECORD),
+        "states": [state.to_dict() for state in states],
         "note": (
-            "counts come from docs/verification.json; an adapter is marked verified only when "
-            "its row there says ok"
+            "an adapter counts as verified only while its ok row is younger than "
+            f"{MAX_AGE_DAYS} days; the spec's own flag is a declaration, not evidence"
         ),
     }
 

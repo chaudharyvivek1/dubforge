@@ -82,6 +82,7 @@ class NoLipSync(LipSync):
         kind="lipsync",
         title="No lip sync (audio only)",
         verified=True,
+        local=True,
         quality="The picture is untouched — the normal, cheap, honest default.",
     )
 

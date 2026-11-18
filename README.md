@@ -3,7 +3,7 @@
 # dubforge
 
 [![ci](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml/badge.svg)](https://github.com/chaudharyvivek1/dubforge/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-629%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
+[![tests](https://img.shields.io/badge/tests-645%20passing-brightgreen)](https://github.com/chaudharyvivek1/dubforge/blob/main/tests)
 [![python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/chaudharyvivek1/dubforge/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-27%20tools-6f42c1)](src/dubforge/server.py)
@@ -290,6 +290,11 @@ dubforge verify import rec.json # accept evidence produced on a machine that had
 dubforge verify status          # what the ledger says now
 ```
 
+The flag is derived, not declared: an `ok` row younger than 180 days verifies a network adapter,
+an older row expires and says so, and a local adapter (the stub, the transcript reader, ffmpeg
+centre-removal) is labelled as proven-by-the-suite rather than blended with a live check. A
+declaration without evidence is reported as a contradiction.
+
 A row that says `ok` means the credentials work and the response shape is right. It does not
 mean the voice sounds good or the translation is accurate — that needs a human, which is what
 `review.json` is for. The full procedure, and what a rejected import looks like, is in
@@ -434,7 +439,8 @@ Start with the FAQ if you have a "why does it sound like this" question; start w
 | [docs/configuration.md](docs/configuration.md) | **every setting**: environment name, type, default, range (generated) |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | **every MCP tool**: parameters, types, defaults, envelope (generated) |
 | [docs/cli.md](docs/cli.md) | **every CLI command and flag** (generated) |
-| [docs/verification.md](docs/verification.md) | the live-verification procedure, the record, and what it is worth |
+| [docs/verification.md](docs/verification.md) | the live-verification procedure, how the flag is derived, what a green row does not mean |
+| [docs/release-0.9.0.md](docs/release-0.9.0.md) | the 0.9.0 checklist: expiry, local vs network, contradictions |
 | [docs/release-0.8.0.md](docs/release-0.8.0.md) | the 0.8.0 checklist: the verification ledger, plan/run/import |
 | [docs/release-0.7.0.md](docs/release-0.7.0.md) | the 0.7.0 checklist: the cost model, extraction and placement caches |
 | [docs/release-0.6.0.md](docs/release-0.6.0.md) | the 0.6.0 checklist: stage reuse, where it stops, timing |
