@@ -336,9 +336,7 @@ def test_a_provider_that_returns_no_audio_fails_the_line(demo_clip, tmp_path):
         name = "broken"
         # A Spec always carries `local` since 0.9.0 (the verification ledger reads it), so the
         # double must satisfy the interface rather than rely on a getattr fallback.
-        spec = type(
-            "S", (), {"name": "broken", "kind": "tts", "verified": False, "local": False}
-        )()
+        spec = type("S", (), {"name": "broken", "kind": "tts", "verified": False, "local": False})()
 
         def voices(self, language=""):
             return []
