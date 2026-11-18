@@ -504,10 +504,12 @@ def test_the_quality_table_comparison_would_catch_a_phantom_row(tmp_path, monkey
 
 def test_the_documented_python_and_platform_support_matches_pyproject_and_ci():
     """README, pyproject and the CI matrix must agree about what is supported."""
-    import tomllib
-
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    requires = pyproject["project"]["requires-python"]
+    # A regex, not `tomllib`: this project supports Python 3.10, where `tomllib` does not
+    # exist. CI on 3.10 caught that, which is the whole reason the matrix has a 3.10 row.
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^requires-python\s*=\s*"([^"]+)"', pyproject, re.M)
+    assert match, "pyproject.toml has no requires-python"
+    requires = match.group(1)
     assert requires == ">=3.10", f"pyproject says {requires}; the docs and CI say 3.10+"
 
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
