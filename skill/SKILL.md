@@ -147,10 +147,15 @@ dubforge_apply_review review_path="review.json"      → {"applied": 5, "rendere
 
 * A review file carries the job id and the source's content fingerprint: a file made from a
   different version of the video is **refused**, not applied.
-* Only edited lines are synthesised; the bed, every unchanged render and — since 0.5.0 — the
-  dialogue track are reused. The track is *spliced*: the changed lines' own ranges are muted
-  and the new renders mixed in at the same starts. Normalisation, ducking, mix and mux still
-  run, so never claim "only five lines were processed".
+* Only edited lines are synthesised. The bed, every unchanged render and the dialogue track are
+  reused; the track is *spliced* — the changed lines' own ranges are muted and the new renders
+  mixed in at the same starts.
+* Since 0.6.0 the mix and mux are cached too: a run where nothing changed reuses every stage
+  and writes a byte-identical file. A run that spliced the dialogue **rebuilds the mix**,
+  because the loudness gain is global — `review.json` says `mix_mode: "rebuilt"`.
+* Read `work.dialogue_mode`, `work.mix_mode`, `work.mux_mode`, `work.rebuilt_stages` and
+  `work.slowest_stage` before describing what a run cost. Never say "only five lines were
+  processed" when the mix was rebuilt.
 * When a changed line overlaps another line, the splice is refused and the track is assembled
   from scratch; `review.json` then says `work.dialogue_mode: "assembled"`. Report what it says.
 * Applying the same file twice is a no-op.

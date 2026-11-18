@@ -207,9 +207,10 @@ table:
 | TTS renders | **yes**, per line, by fingerprint | unchanged text and voice |
 | stretch to window | no | depends on the window, which neighbours change; milliseconds |
 | dialogue track assembly | **spliced** when only some lines changed, **reused** when none did, assembled otherwise | only the changed lines' own ranges are muted and re-mixed; an overlap forces a full assembly |
-| loudness normalisation | no | it is a property of the whole mix |
-| ducking | no | the envelope follows the current dialogue — reusing it would be wrong |
-| mux | no | the file is rebuilt, into a temporary path first |
+| loudness normalisation | **yes**, if the dialogue and mix settings are unchanged | it is a global gain, so its key includes the dialogue's hash |
+| ducking + mix | **yes**, under the same key | the envelope follows the dialogue; if the dialogue's bytes changed, the mix is rebuilt |
+| mux | **yes**, if the mix, source and bitrate are unchanged | content-addressed, so a re-run copies a validated file instead of encoding |
+| QC and the report | no | they are the record of the run |
 
 `review.json` carries this as data: `work.reused_renders`, `work.rendered_segments`,
 `work.stems_reused`, `work.cache_hit_ratio`, `work.rebuilt_stages` and per-stage seconds.
@@ -238,6 +239,48 @@ Three things make it safe rather than clever:
 `tests/test_dialogue_splice.py::test_a_splice_equals_a_full_rebuild` compares the spliced
 result against a from-scratch rebuild sample by sample (tolerance 1%), because an optimisation
 that changes the mix is not an optimisation.
+
+## The reuse ladder, and where it stops (0.6.0)
+
+Each stage is cached against exactly the inputs that determine it, so a hit means "the input
+is identical", not "the input is probably similar":
+
+| stage | key | what a hit skips |
+|---|---|---|
+| TTS render | text, voice, provider, model, language, style, emotion, sample rate | the paid call |
+| bed | source content hash, separator, model, keep-background, sample rate | separation |
+| dialogue track | per-line clip hashes + starts (manifest), track SHA-256 | the assembly passes |
+| mix | dialogue hash, bed hash, gains, duck, loudness target, true peak, runtime, rate | loudnorm, ducking, mix |
+| mux | mix hash, source hash, bitrate, has-video | the audio encode |
+
+**Where it stops, and why.** The mix is *not* reused when the dialogue was spliced. Loudness
+normalisation applies one gain to the whole track; a changed line moves that gain, and every
+untouched region moves with it. Splicing the mix would produce a file that is not the file the
+settings ask for. So a splice rebuilds the mix, the report says `mix_mode: "rebuilt"`, and the
+saving that remains is the TTS calls and the assembly.
+
+That asymmetry is deliberate and tested: `test_a_spliced_dialogue_always_rebuilds_the_mix`
+fails if someone "optimises" it later.
+
+## Reading a run's cost (0.6.0)
+
+`review.json` → `work`:
+
+```json
+{
+  "reused_renders": 3, "rendered_segments": 0,
+  "stems_reused": 1, "stems_rendered": 0,
+  "cache_hit_ratio": 1.0,
+  "dialogue_mode": "reused", "mix_mode": "reused", "mux_mode": "reused",
+  "rebuilt_stages": [],
+  "stage_seconds": {"synthesise": 0.43, "transcribe": 0.21},
+  "total_stage_seconds": 0.88,
+  "slowest_stage": "synthesise", "slowest_seconds": 0.43
+}
+```
+
+`rebuilt_stages` is derived from the modes, not hardcoded — a hardcoded list is how 0.4.0
+ended up claiming a stage it had not run.
 
 ## Publishing an output (0.4.0)
 

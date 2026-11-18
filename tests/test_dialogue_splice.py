@@ -254,6 +254,11 @@ def test_the_review_reports_the_dialogue_mode(tmp_path):
     assert "dialogue track" not in payload["work"]["rebuilt_stages"], (
         "a reused track was not rebuilt, and the report must not claim it was"
     )
-    assert "ducking" in payload["work"]["rebuilt_stages"], (
-        "ducking follows the dialogue, so it always runs"
+    # Contract change in 0.6.0: ducking used to run on every regeneration. It now runs only
+    # when the mix is rebuilt, which for an unchanged dialogue means never — the mix key
+    # covers the dialogue's hash. The spliced case (where it must run) is asserted in
+    # tests/test_stage_cache.py::test_a_spliced_dialogue_always_rebuilds_the_mix.
+    assert payload["work"]["mix_mode"] == "reused"
+    assert "ducking" not in payload["work"]["rebuilt_stages"], (
+        "the mix was reused, so ducking did not run"
     )

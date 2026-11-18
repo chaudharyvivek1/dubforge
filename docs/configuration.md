@@ -79,6 +79,7 @@ starting any work.
 | `stem_cache_max_bytes` | `DUBFORGE_STEM_CACHE_MAX_BYTES` | `int` | `8589934592` | 0 – 1099511627776 |
 | `overwrite_output` | `DUBFORGE_OVERWRITE_OUTPUT` | `bool` | `False` | — |
 | `dialogue_cache` | `DUBFORGE_DIALOGUE_CACHE` | `bool` | `True` | — |
+| `stage_cache` | `DUBFORGE_STAGE_CACHE` | `bool` | `True` | — |
 | `retranslate` | `DUBFORGE_RETRANSLATE` | `bool` | `True` | — |
 | `qc_max_chars_per_line` | `DUBFORGE_QC_MAX_CHARS_PER_LINE` | `int` | `42` | 10 – 120 |
 | `qc_max_lines` | `DUBFORGE_QC_MAX_LINES` | `int` | `2` | 1 – 4 |

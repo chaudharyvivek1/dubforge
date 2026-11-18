@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import alignment, dialogue, events, ffmpeg, fit, qc, srt, stems, timeline
+from . import alignment, dialogue, events, ffmpeg, fit, mix, qc, srt, stems, timeline
 from . import limits as limits_mod
 from . import segments as segment_store
 from .config import Settings
@@ -124,6 +124,8 @@ class DubResult:
     stems_rendered: int = 0
     dialogue_mode: str = "assembled"
     spliced_lines: int = 0
+    mix_mode: str = "rebuilt"
+    mux_mode: str = "rebuilt"
     transcript_json: str = ""
     subtitles: dict = field(default_factory=dict)
     qc: dict = field(default_factory=dict)
@@ -153,6 +155,8 @@ class DubResult:
             "stems_rendered": self.stems_rendered,
             "dialogue_mode": self.dialogue_mode,
             "spliced_lines": self.spliced_lines,
+            "mix_mode": self.mix_mode,
+            "mux_mode": self.mux_mode,
             "subtitles": self.subtitles,
             "qc": self.qc,
             "plan": self.plan,
@@ -441,6 +445,18 @@ def _validate_output(path: Path, source_info) -> None:
         )
 
 
+def _rebuilt_stages(result: DubResult) -> list[str]:
+    """Which stages actually ran again, from the run's own step log."""
+    stages: list[str] = []
+    if result.dialogue_mode == "assembled":
+        stages.append("dialogue track")
+    if result.mix_mode != "reused":
+        stages.extend(["normalisation", "ducking", "mix"])
+    if result.mux_mode != "reused":
+        stages.append("mux")
+    return stages
+
+
 def _clip_hash(path: str | None) -> str:
     """Identity of one placed clip, so a changed render is detected without decoding it."""
     if not path or not Path(path).exists():
@@ -610,7 +626,7 @@ def _write_review(
                 "warnings": list(seg.notes),
             }
         )
-    stage_seconds = {step.name: round(step.seconds, 2) for step in result.steps if step.seconds}
+    timings = mix.summarise_timings(result.steps)
     total_segments = max(1, len(segments))
     payload = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -639,13 +655,12 @@ def _write_review(
             "cache_hit_ratio": round(result.reused_segments / total_segments, 3),
             "dialogue_mode": result.dialogue_mode,
             "spliced_lines": result.spliced_lines,
-            # The dialogue track is only rebuilt when it could not be reused or spliced;
-            # everything downstream of it always is, because it depends on the dialogue.
-            "rebuilt_stages": (
-                (["dialogue track"] if result.dialogue_mode == "assembled" else [])
-                + ["normalisation", "ducking", "mix", "mux"]
-            ),
-            "stage_seconds": stage_seconds,
+            "mix_mode": result.mix_mode,
+            "mux_mode": result.mux_mode,
+            # Derived from what actually ran, not from a fixed list: 0.4.0 hardcoded this and
+            # was wrong the moment a stage learned to reuse.
+            "rebuilt_stages": _rebuilt_stages(result),
+            **timings,
         },
         "segments": rows,
         "note": (
@@ -1361,35 +1376,69 @@ def dub(
             dialogue_store.save(dub_track, entries, info.duration, 48000)
     result.dialogue_mode = dialogue_mode
     result.spliced_lines = spliced_lines
-    normalised = step(
-        "normalise loudness",
-        lambda: (
-            ffmpeg.loudnorm(
-                dub_track, work / "dub_norm.wav", settings.loudness_lufs, settings.true_peak_db
-            ),
-            f"{settings.loudness_lufs} LUFS",
-        ),
+    # 8b — the mix stage, cached against exactly what determines it (0.6.0).
+    #
+    # Reusing the mix for a *spliced* dialogue would be wrong: loudness normalisation applies
+    # one gain to the whole track, so a changed line moves that gain and every untouched region
+    # with it. The key includes the dialogue's hash, so a splice misses and rebuilds — and the
+    # run report says so.
+    mix_cache = (
+        mix.StageCache(Path(settings.workdir) / "cache" / "mix", ".wav")
+        if settings.stage_cache
+        else None
     )
-    if bed_path and Path(bed_path).exists():
-        mixed = step(
-            "mix with original bed",
+    want_mix = mix.mix_key(
+        dub_track,
+        bed_path if bed_path and Path(bed_path).exists() else None,
+        voice_gain_db=settings.voice_gain_db,
+        bed_gain_db=settings.bed_gain_db,
+        duck=settings.duck,
+        loudness_lufs=settings.loudness_lufs,
+        true_peak_db=settings.true_peak_db,
+        total_duration=info.duration,
+    )
+    mixed: str | None = None
+    mix_mode = "rebuilt"
+    bed_used = bool(bed_path and Path(bed_path).exists())
+    cached_mix = mix_cache.find(want_mix) if mix_cache is not None else None
+    if cached_mix is not None:
+        mixed = mix_cache.restore(cached_mix, work / "mix.wav")
+        mix_mode = "reused"
+        result.steps.append(
+            Step("mix", 0.0, f"reused the cached mix ({want_mix[:8]}): nothing downstream changed")
+        )
+    if mixed is None:
+        normalised = step(
+            "normalise loudness",
             lambda: (
-                ffmpeg.duck_and_mix(
-                    normalised,
-                    bed_path,
-                    work / "mix.wav",
-                    voice_gain_db=settings.voice_gain_db,
-                    bed_gain_db=settings.bed_gain_db,
-                    duck=settings.duck,
-                    total_duration=info.duration,
+                ffmpeg.loudnorm(
+                    dub_track, work / "dub_norm.wav", settings.loudness_lufs, settings.true_peak_db
                 ),
-                f"bed {settings.bed_gain_db} dB, ducking {'on' if settings.duck else 'off'}",
+                f"{settings.loudness_lufs} LUFS",
             ),
         )
-        bed_used = True
-    else:
-        mixed = normalised
-        bed_used = False
+        if bed_used:
+            mixed = step(
+                "mix with original bed",
+                lambda: (
+                    ffmpeg.duck_and_mix(
+                        normalised,
+                        bed_path,
+                        work / "mix.wav",
+                        voice_gain_db=settings.voice_gain_db,
+                        bed_gain_db=settings.bed_gain_db,
+                        duck=settings.duck,
+                        total_duration=info.duration,
+                    ),
+                    f"bed {settings.bed_gain_db} dB, ducking {'on' if settings.duck else 'off'}",
+                ),
+            )
+        else:
+            mixed = normalised
+        if mix_cache is not None:
+            with contextlib.suppress(OSError):
+                mix_cache.save(want_mix, mixed, {"dialogue_mode": dialogue_mode})
+    result.mix_mode = mix_mode
 
     # 9 — mux ------------------------------------------------------------------
     if output is None:
@@ -1411,8 +1460,25 @@ def dub(
             f"{destination} already exists; pass --overwrite (or DUBFORGE_OVERWRITE_OUTPUT=1) "
             "to replace it, or choose another --out"
         )
+    mux_cache = (
+        mix.StageCache(Path(settings.workdir) / "cache" / "mux", ".mp4")
+        if settings.stage_cache and info.has_video
+        else None
+    )
+    want_mux = (
+        mix.mux_key(mixed, source, audio_bitrate=settings.audio_bitrate, has_video=info.has_video)
+        if mux_cache is not None
+        else ""
+    )
+    cached_mux = mux_cache.find(want_mux) if mux_cache is not None else None
     try:
-        if info.has_video:
+        if cached_mux is not None:
+            # Nothing that the container depends on has changed: copy the finished file and
+            # still validate it, because publishing is what makes it real.
+            shutil.copyfile(cached_mux.artifact, partial)
+            result.mux_mode = "reused"
+            result.steps.append(Step("mux", 0.0, f"reused the cached container ({want_mux[:8]})"))
+        elif info.has_video:
             step(
                 "mux video + dub",
                 lambda: (
@@ -1444,6 +1510,9 @@ def dub(
 
         # The output is only *published* once the file is complete and readable.
         _validate_output(partial, info)
+        if mux_cache is not None and cached_mux is None:
+            with contextlib.suppress(OSError):
+                mux_cache.save(want_mux, partial, {"audio_bitrate": settings.audio_bitrate})
         os.replace(partial, destination)
     except Exception:
         with contextlib.suppress(OSError):
@@ -1476,7 +1545,10 @@ def dub(
             f"(rate limits or server errors; no request was retried after an ambiguous timeout)"
         )
     result.output = output
-    result.audio = str(Path(work) / "dub_norm.wav")
+    # The normalised dialogue alone is what the QC audio checks measure; when the mix was
+    # reused that file is still on disk from the run that built it.
+    normalised = str(Path(work) / "dub_norm.wav")
+    result.audio = normalised
     result.transcript_json = transcript.save(work / "transcript.dub.json")
     result.subtitles = srt.write_all(segments, work, stem, lang=settings.target_lang)
     result.qc = qc.report(

@@ -106,7 +106,11 @@ def snapshot(settings: Settings | None = None) -> dict:
         "segment_reuse": settings.segment_reuse,
         "stem_cache": settings.stem_cache,
         "dialogue_reuse": settings.dialogue_cache,
-        "always_rebuilt": ["normalisation", "ducking", "mix", "mux"],
+        "stage_cache": settings.stage_cache,
+        # A stage is reused only when every input that determines it is unchanged; these are
+        # the ones that always run because their input always changes (a new output file, and
+        # QC on it).
+        "always_runs": ["qc", "report"],
     }
 
     return {

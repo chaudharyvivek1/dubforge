@@ -211,7 +211,14 @@ def test_a_changed_asr_configuration_transcribes_again(demo_clip, tmp_path):
         Settings(asr="stub", asr_model="a-different-model", **base),
         output=tmp_path / "b.mp4",
     )
-    assert not any("cached" in step.detail for step in other.steps)
+    # Scoped to the transcribe step: since 0.6.0 other stages legitimately say "cached" in
+    # their own right (the mix, the mux), and a substring sweep over every step would fail on
+    # them for the wrong reason.
+    transcribe = [step for step in other.steps if step.name == "transcribe"]
+    assert transcribe, "the run must record a transcribe step"
+    assert not any("cached" in step.detail for step in transcribe), (
+        "a changed asr_model must not reuse the transcript cache"
+    )
 
 
 @needs_ffmpeg

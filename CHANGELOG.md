@@ -2,6 +2,76 @@
 
 All notable changes. Dates are ISO. This project follows semantic versioning.
 
+## [0.6.0] — 2026-11-18
+
+Stage-level reuse and honest timing. A regeneration now reuses every stage whose inputs are
+unchanged — renders, bed, dialogue track, mix, mux — and a run with no changes produces a
+byte-identical file in a fraction of the time.
+
+### Added — the mix and mux stages are cached (P1)
+
+* `mix.py` keys each stage over exactly the inputs that determine it:
+  * **mix** — the dialogue track's content hash, the bed's hash, the voice and bed gains, the
+    ducking switch, the loudness target, the true-peak ceiling, the runtime, the sample rate;
+  * **mux** — the mix's hash, the source's hash, the audio bitrate, whether the source has
+    video.
+* An exact hit skips `loudnorm`, `duck_and_mix` and `mux` entirely: an unchanged run of the
+  9-second demo went from 6.6 s to 2.9 s and produced **byte-identical** output.
+* The cache is content-addressed, which is the honest part: with stub providers two different
+  texts can render identical audio, so an edited line can still reuse the mix. The columns
+  describe bytes, not intentions, and the benchmark says so.
+* **The mix is never reused for a spliced dialogue.** Loudness normalisation applies one gain
+  to the whole track, so a changed line moves that gain and every untouched region with it.
+  A splice therefore misses the mix key and rebuilds — `mix_mode: "rebuilt"` in the report.
+* Artifacts are verified by SHA-256; a truncated or replaced file is a miss. `StageCache`
+  carries `stats()` and `cleanup(max_bytes=…, dry_run=…)`, largest-first.
+
+### Added — per-stage timing (P1)
+
+* `mix.summarise_timings()` produces `work.stage_seconds`, `work.total_stage_seconds`,
+  `work.slowest_stage` and `work.slowest_seconds` in `review.json`, so a user can see whether a
+  regeneration is paying for synthesis, separation or the mux. Zero-second steps (reuse
+  notices) are excluded — they are not measurements.
+
+### Fixed
+
+* `work.rebuilt_stages` is now derived from what actually ran (`_rebuilt_stages`) instead of a
+  hardcoded list. 0.4.0's list claimed the dialogue track was rebuilt even when untouched;
+  0.5.0 fixed that one case by hand, which was the same mistake waiting to happen again.
+* `capabilities` no longer advertises an `always_rebuilt` list that was about to become false;
+  it publishes `segment_reuse`, `stem_cache`, `dialogue_reuse`, `stage_cache` and
+  `always_runs` (`qc`, `report`), which are true by construction.
+* A reused mix left `normalised` undefined for the QC call; the dialogue-alone path is now
+  resolved explicitly, and the QC audio checks still measure the normalised dialogue.
+
+### New settings
+
+`stage_cache` (true). `DubResult` gained `mix_mode` and `mux_mode`.
+
+### Tests
+
+579 → 593. New `tests/test_stage_cache.py` (13): key coverage in both directions (content, not
+names), truncated artifacts, cleanup order, timing summary, and pipeline tests that monkeypatch
+`loudnorm`/`duck_and_mix`/`mux`/`assemble_dub` and assert a no-op regeneration calls **none** of
+them while still producing identical bytes.
+
+### Benchmark (`--regen`, small clip, stub providers)
+
+| case | TTS | separations | reused renders | bed | dialogue | mix | mux | wall |
+|---|---|---|---|---|---|---|---|---|
+| full run | 3 | 1 | 0 | 0 | assembled | rebuilt | rebuilt | 6.6 s |
+| regen, 0 edited | 0 | 0 | 3 | 1 | reused | reused | reused | 2.9 s |
+| regen, 1 edited | 1 | 0 | 2 | 1 | spliced | rebuilt | rebuilt | 5.2 s |
+
+### Known limitations
+
+* A spliced dialogue always rebuilds the mix: the normalisation gain is global, and splicing
+  the mix would misrepresent the audio. Reusing the mix for untouched regions would need
+  per-region gains, which the loudness model here does not have.
+* Overlapping dialogue still costs a full assembly.
+* Word-level alignment remains provider-dependent and unverified live; calibration has no
+  measured samples.
+
 ## [0.5.0] — 2026-11-17
 
 Partial remixing. Editing five lines of a 300-line film no longer rebuilds the dialogue

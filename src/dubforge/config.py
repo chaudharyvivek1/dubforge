@@ -165,6 +165,8 @@ class Settings:
     overwrite_output: bool = False
     # Splice changed lines into the previous dialogue track instead of rebuilding it (0.5.0).
     dialogue_cache: bool = True
+    # Reuse the mix and the mux when nothing that determines them changed (0.6.0).
+    stage_cache: bool = True
     # A regeneration keeps the edited translations; a normal run translates.
     retranslate: bool = True
 
